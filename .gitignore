@@ -1,0 +1,14 @@
+# Build output
+/bin/
+/dist/
+
+# Local data
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
