@@ -6,6 +6,9 @@ See [docs/SPEC.md](docs/SPEC.md) for the full specification.
 ## Requirements
 
 - Go 1.25 or newer (`brew install go` on macOS)
+- For Claude Code: gopls (`go install golang.org/x/tools/gopls@latest`),
+  used by the MCP server in `.mcp.json`. `$(go env GOPATH)/bin` must be in
+  your `PATH`.
 
 ## Development
 

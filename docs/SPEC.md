@@ -33,10 +33,23 @@ sends one email to each concerned parent.
 - Upload an `.xlsx` file from the browser.
 - Show a **preview** before saving: rows read, rows with errors (missing
   email, invalid email, empty names), duplicates.
-- On confirm, insert or update data:
-  - A parent is identified by their email address (case-insensitive).
-  - A child is identified by first name + last name + parent.
-  - Re-importing a file updates existing records instead of duplicating them.
+- Nothing is written to the database during the preview. All parsed data is
+  saved **when the user confirms the preview**.
+- The save runs in **one database transaction**: either the whole file is
+  saved, or nothing changes (e.g. on error or crash, the previous data stays).
+- **The Excel file is the source of truth.** Each import replaces the
+  parents and children data:
+  - Entries present in the file and already in the database get the values
+    from the file (existing values are overwritten).
+  - New entries in the file are added.
+  - Entries in the database but missing from the file are deleted.
+  - Matching rules: a parent is identified by their email address
+    (case-insensitive); a child by first name + last name + parent.
+    Matching keeps database IDs stable between imports.
+- The preview shows what the import will change: N added, N updated,
+  N deleted. Deletions are highlighted so the user can cancel.
+- Email history (§4.5), templates and settings are **not** affected by an
+  import. History stays readable even after a child or parent is deleted.
 - Keep a record of each import (date, file name, counts).
 
 **Expected file format:** to be confirmed (see §10). Working assumption: one row
@@ -125,17 +138,22 @@ Gmail limit: about 500 emails/day for a personal account. Outlook.com: about
 parents        id, name, email (unique, lower-case), created_at, updated_at
 children       id, first_name, last_name, class (nullable), created_at, updated_at
 child_parents  child_id, parent_id                    -- a child can have 2 parents
-imports        id, file_name, imported_at, rows_total, rows_ok, rows_error
+imports        id, file_name, imported_at, rows_total, rows_ok, rows_error,
+               added, updated, deleted
 templates      id, name, subject, body, created_at, updated_at
 batches        id, subject, body, created_at, status
-messages       id, batch_id, parent_id, to_email, subject, body, status, error, sent_at
-message_children  message_id, child_id
+messages       id, batch_id, parent_id (nullable), parent_name, to_email,
+               subject, body, status, error, sent_at
+message_children  message_id, child_id (nullable), child_name
 settings       key, value
 ```
 
 - Schema versioned with embedded SQL migrations, applied on startup.
 - `messages` stores the final rendered text, so the history shows exactly what
   was sent even if a template or a child record changes later.
+- History tables keep a copy of names and emails, and their links to
+  `parents` / `children` use `ON DELETE SET NULL`, so a re-import that
+  deletes a child or parent never breaks or erases history.
 
 ## 8. Security and privacy
 
