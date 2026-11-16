@@ -30,9 +30,18 @@ sends one email to each concerned parent.
 
 ### 4.1 Excel import
 
-- Upload an `.xlsx` file from the browser.
-- Show a **preview** before saving: rows read, rows with errors (missing
-  email, invalid email, empty names), duplicates.
+Status: ✅ implemented (`internal/importer`, `internal/store`, `/import` pages).
+
+- Upload an `.xlsx` file from the browser (max 20 MB; `.xls`/`.csv` are
+  refused with a hint to save as `.xlsx`). Only the first sheet is read.
+- Show a **preview** before saving: rows read, valid rows, row errors,
+  warnings, and the planned changes.
+- **Row errors block the import**: missing parent name, missing child name,
+  missing or invalid email. The user fixes the file and imports it again.
+  (Importing only the valid rows would delete the children of the invalid
+  rows, since the file is the source of truth.)
+- **Warnings don't block**: duplicate row (same child + email, ignored);
+  same email with a different parent name (the first name is kept).
 - Nothing is written to the database during the preview. All parsed data is
   saved **when the user confirms the preview**.
 - The save runs in **one database transaction**: either the whole file is
@@ -44,18 +53,38 @@ sends one email to each concerned parent.
   - New entries in the file are added.
   - Entries in the database but missing from the file are deleted.
   - Matching rules: a parent is identified by their email address
-    (case-insensitive); a child by first name + last name + parent.
+    (case-insensitive); a child by their name + parent, the name compared
+    without case, accents or extra spaces ("LEA  Dupont" = "Léa Dupont").
     Matching keeps database IDs stable between imports.
+  - A child listed with two parents (two rows, two emails) is stored once
+    per parent.
 - The preview shows what the import will change: N added, N updated,
   N deleted. Deletions are highlighted so the user can cancel.
 - Email history (§4.5), templates and settings are **not** affected by an
   import. History stays readable even after a child or parent is deleted.
 - Keep a record of each import (date, file name, counts).
 
-**Expected file format:** to be confirmed (see §10). Working assumption: one row
-per child, with columns for parent name, child name and parent email. Column
-mapping should be tolerant (header names matched case/accents-insensitively),
-with a manual column-mapping step as a later improvement.
+- The preview runs the real import in a transaction and rolls it back, so
+  what it shows is exactly what the confirmation will do. The checked rows
+  wait in memory for 30 minutes under a token, used up only by a successful
+  save (a failed save can be retried).
+- If another import was saved between the preview and the confirmation, the
+  confirmation is refused and the user must check the file again, so an
+  import never applies changes its preview did not show.
+
+**File format:** to be confirmed with a real file (see §10). Current
+assumption: one row per child; the first non-empty row is the header; other
+columns are ignored. Accepted header names (case, accents and spaces
+ignored):
+
+| Column | Accepted headers |
+|---|---|
+| Parent name | nom parent, nom du parent, nom parents, nom des parents, parent, parents, parent name |
+| Child name | nom enfant, nom de l'enfant, enfant, child, child name |
+| Email | adresse email, adresse e-mail, adresse mail, adresse courriel, email, e-mail, mail, courriel |
+
+Sample file with fake data: `docs/exemple-familles.xlsx`.
+Later improvement: a manual column-mapping step.
 
 ### 4.2 Child list and selection
 
@@ -101,26 +130,53 @@ with a manual column-mapping step as a later improvement.
 
 ## 5. Email providers
 
-| Provider | Server | Authentication |
+The main account is a **Microsoft 365 work account** (Exchange Online).
+
+| Provider | How it sends | Authentication |
 |---|---|---|
-| Outlook / Microsoft 365 | `smtp.office365.com:587` (STARTTLS) | OAuth2 (see below) |
-| Gmail | `smtp.gmail.com:587` (STARTTLS) | App password (requires 2FA), or OAuth2 |
-| Custom SMTP | user-defined | username + password |
+| Microsoft 365 (default) | Microsoft Graph API, `POST /me/sendMail` | OAuth2, "Sign in with Microsoft" |
+| Gmail | SMTP `smtp.gmail.com:587` (STARTTLS) | App password (requires 2FA) |
+| Custom SMTP | user-defined host/port/TLS | username + password |
 
-**Outlook risk:** Microsoft is phasing out plain username/password SMTP login
-for Outlook.com and Microsoft 365 in favor of OAuth2 ("modern auth"). Plan:
+### 5.1 Microsoft 365 via Microsoft Graph
 
-1. Implement OAuth2 for Microsoft (sign in with Microsoft in the browser,
-   store the refresh token, send via SMTP XOAUTH2 or the Microsoft Graph
-   `sendMail` API). This requires registering an app in Microsoft Entra ID
-   (free).
-2. Keep plain SMTP login available for providers that still support it.
+Why Graph rather than SMTP: on Microsoft 365, SMTP sending (SMTP AUTH) is
+often disabled by the organization, and Microsoft is retiring password-based
+SMTP login. Graph works with modern sign-in only, and sent emails are saved in
+the user's Outlook **Sent Items** folder.
 
-Code design: one `Sender` interface with one implementation per auth method,
-so providers can be added without touching the rest of the app.
+- **App registration** (once, free) in Microsoft Entra ID:
+  - Platform "Mobile and desktop applications" (public client, no secret).
+  - Redirect URI: `http://localhost` (the app's own local server receives
+    the login response).
+  - Delegated permissions: `Mail.Send`, `User.Read`, `offline_access`.
+- **Sign-in flow**: OAuth2 authorization code with PKCE. The user clicks
+  "Se connecter avec Microsoft" in Settings, signs in on the Microsoft page,
+  and is sent back to the app. The app shows which account is connected.
+- **Tokens**: the refresh token is stored in the OS keychain and refreshed
+  automatically; the user signs in again only if it expires or is revoked.
+- **Sending**: one Graph `sendMail` call per email, with
+  `saveToSentItems: true`. Plain HTTP + `golang.org/x/oauth2`; no Microsoft
+  SDK needed.
+- **Limits** (Exchange Online): about 30 messages per minute and
+  10,000 recipients per day. The sending queue waits ~2 s between emails and
+  backs off on HTTP 429 (`Retry-After`).
+- **Admin consent risk**: the organization may block users from approving
+  new apps. Then an IT admin must either grant consent once or register the
+  app in the organization's own tenant (see §10).
 
-Gmail limit: about 500 emails/day for a personal account. Outlook.com: about
-300/day. Both are enough for this use case.
+### 5.2 Other providers (SMTP)
+
+Gmail and custom servers use SMTP with `github.com/wneessen/go-mail`
+(correct encoding of accents, STARTTLS, connection reuse).
+Gmail limit: about 500 emails/day for a personal account.
+
+### 5.3 Code design
+
+One `Sender` interface (`Send(ctx, Message) error`) with two implementations:
+`graphSender` and `smtpSender`. The sending queue, history and UI only know the
+interface, so providers can be added without touching the rest of the app.
+Tests use a fake sender; no real email is ever sent from tests.
 
 ## 6. Localization
 
@@ -136,10 +192,10 @@ Gmail limit: about 500 emails/day for a personal account. Outlook.com: about
 
 ```
 parents        id, name, email (unique, lower-case), created_at, updated_at
-children       id, first_name, last_name, class (nullable), created_at, updated_at
-child_parents  child_id, parent_id                    -- a child can have 2 parents
-imports        id, file_name, imported_at, rows_total, rows_ok, rows_error,
-               added, updated, deleted
+children       id, parent_id, name, name_key, created_at, updated_at
+               -- unique (parent_id, name_key); deleted with their parent
+imports        id, file_name, imported_at, rows_read,
+               parents_added/updated/deleted, children_added/updated/deleted
 templates      id, name, subject, body, created_at, updated_at
 batches        id, subject, body, created_at, status
 messages       id, batch_id, parent_id (nullable), parent_name, to_email,
@@ -172,8 +228,9 @@ settings       key, value
 | UI | server-rendered `html/template` + htmx, assets embedded with `embed` |
 | Excel | `github.com/xuri/excelize/v2` |
 | Database | SQLite via `modernc.org/sqlite` (pure Go, no CGO) |
-| Email | `github.com/wneessen/go-mail` (SMTP, STARTTLS, XOAUTH2) |
-| OAuth2 | `golang.org/x/oauth2` |
+| Email (Microsoft 365) | Microsoft Graph `sendMail` over `net/http` |
+| Email (SMTP) | `github.com/wneessen/go-mail` |
+| OAuth2 | `golang.org/x/oauth2` (authorization code + PKCE) |
 | Secrets | `github.com/zalando/go-keyring` |
 
 Project layout:
@@ -207,8 +264,9 @@ The app starts as a browser tab. It may later run in its own window with
 
 1. Exact Excel layout: one row per child? Can a child have two parents / two
    emails? Extra columns (class, etc.)? → a sample file with fake data is needed.
-2. Is the Outlook account personal (Outlook.com) or a school Microsoft 365
-   account? This changes the OAuth2 setup.
+2. ~~Outlook.com or Microsoft 365?~~ → Microsoft 365 work account.
+   Still open: can users approve new apps themselves in this organization, or
+   does IT need to grant admin consent / register the app? (Ask IT.)
 3. Should attachments be supported (e.g. a PDF menu)?
 4. Should the app sign and notarize the macOS binary (avoids security warnings,
    requires an Apple developer account)?
@@ -216,11 +274,14 @@ The app starts as a browser tab. It may later run in its own window with
 ## 11. Milestones
 
 1. **Skeleton** — Go module, HTTP server, embedded placeholder page, build scripts. ✅
-2. **Storage** — SQLite, migrations, data folder.
-3. **Import** — Excel upload, preview, save.
+2. **Storage** — SQLite, migrations, data folder. ✅
+3. **Import** — Excel upload, preview, save. ✅ (minimal FR/EN i18n added
+   with it, since no UI text may be hard-coded)
 4. **Selection** — child list, search, selection.
-5. **Compose & send** — templates, placeholders, preview, SMTP sending, history.
-6. **Outlook OAuth2** — Microsoft sign-in.
+5. **Compose & send** — templates, placeholders, preview, sending queue
+   (fake sender), history.
+6. **Microsoft 365** — Microsoft sign-in and Graph sending.
+6b. **SMTP** — Gmail / custom SMTP sender.
 7. **i18n** — FR/EN translation files and language switch.
 8. **Packaging** — Windows/macOS builds, open browser on start, app icon.
 

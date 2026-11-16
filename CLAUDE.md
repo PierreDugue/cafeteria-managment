@@ -10,8 +10,9 @@ decision changes.
 
 ## Status
 
-Skeleton only: HTTP server + placeholder page. No features yet. See the
-milestones in `docs/SPEC.md` §11.
+Done: SQLite storage with migrations, Excel import with preview (SPEC §4.1),
+minimal FR/EN i18n. Next: child list and selection (§4.2). See the milestones
+in `docs/SPEC.md` §11.
 
 ## Commands
 
@@ -29,10 +30,17 @@ Before finishing a change: `gofmt -l .` (prints nothing), `go vet ./...`,
 
 ```
 cmd/cafeteria/     entry point: flags, startup, shutdown (wiring only)
-internal/server/   HTTP routes and handlers
-internal/...       store, importer, mailer, i18n (to come, see SPEC §9)
-web/               templates and static files, embedded in the binary (web.FS)
+internal/server/   HTTP routes, handlers, localhost/CSRF protection
+internal/store/    SQLite access; migrations in store/migrations/NNN_*.sql
+internal/importer/ Excel parsing and row validation (no DB access)
+internal/i18n/     translations loader (Localizer.T in templates)
+internal/textnorm/ name normalization for matching (case, accents, spaces)
+web/templates/     layout.html + one file per page
+web/locales/       fr.json, en.json (same keys, checked by a test)
+web/static/        CSS
 docs/SPEC.md       specification
+docs/GO_CONVENTIONS.md  coding and testing rules
+docs/plans/        one design plan per feature (written by archi)
 ```
 
 ## Key rules
@@ -42,8 +50,8 @@ docs/SPEC.md       specification
 - UI: server-rendered `html/template` + htmx. Server listens on `127.0.0.1` only.
 - Keep the app switchable to a Wails desktop window later (SPEC §9.1): logic
   in `internal/`, plain forms, no popups or new tabs.
-- UI text in French and English through i18n files, never hard-coded
-  (the placeholder page is the only exception for now).
+- UI text in French and English through `web/locales/*.json`, never
+  hard-coded. Add every new key to both files.
 - Excel import: the file is the source of truth. One transaction, saved only
   after the user confirms the preview; entries missing from the file are
   deleted; email history is never affected (SPEC §4.1).
@@ -56,12 +64,27 @@ docs/SPEC.md       specification
   Go code navigation (symbol references, package API, diagnostics), and check
   its diagnostics after editing Go files.
 
-## Agents
+## Agents and workflow
 
-- `goexp` (`.claude/agents/goexp.md`): Go expert with the project's coding
-  practices. Use it for writing or reviewing Go code.
+Coding rules for everyone: `docs/GO_CONVENTIONS.md`.
+
+Features go through four agents (`.claude/agents/`), in this order:
+
+1. `archi` (Opus, high effort): designs the feature, writes
+   `docs/plans/NNN-name.md`, gets the user's approval, then runs the others.
+   It must be the main agent of the session (`claude --agent archi`),
+   because subagents cannot start other subagents.
+2. `goexp`: Go developer, implements production code from the plan.
+   Never writes tests.
+3. `tester`: writes unit tests (`*_test.go` only). Never changes production
+   code; reports bugs back.
+4. `reviewer`: read-only review, security first; also checks duplicated
+   code and missed reuse of existing code. Verdict approved / changes
+   required.
+
 
 ## Open points
 
 - Excel file format not confirmed yet (SPEC §10).
-- Outlook needs OAuth2 (Microsoft is phasing out password SMTP login).
+- Email account is Microsoft 365: send via Microsoft Graph with OAuth2
+  (SPEC §5.1). Unknown yet whether IT admin consent is needed.

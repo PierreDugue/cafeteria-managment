@@ -1,0 +1,17 @@
+{{define "title"}}{{.L.T "home.title"}}{{end}}
+{{define "content"}}{{$L := .L}}{{with .Data}}
+<h1>{{$L.T "home.title"}}</h1>
+
+<div class="stats">
+  <div class="stat"><span class="stat-value">{{.Totals.Children}}</span><span class="stat-label">{{$L.T "common.children"}}</span></div>
+  <div class="stat"><span class="stat-value">{{.Totals.Parents}}</span><span class="stat-label">{{$L.T "common.parents"}}</span></div>
+</div>
+
+{{if .LastImport}}
+  <p class="muted">{{$L.T "home.last_import" .LastImport.FileName ($L.Date .LastImport.ImportedAt)}}</p>
+{{else}}
+  <p>{{$L.T "home.empty"}}</p>
+{{end}}
+
+<p><a class="button" href="/import">{{$L.T "home.import_button"}}</a></p>
+{{end}}{{end}}

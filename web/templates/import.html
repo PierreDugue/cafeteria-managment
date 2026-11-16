@@ -1,0 +1,47 @@
+{{define "title"}}{{.L.T "import.title"}}{{end}}
+{{define "content"}}{{$L := .L}}{{with .Data}}
+<h1>{{$L.T "import.title"}}</h1>
+
+{{if .Error}}<div class="alert alert-error" role="alert">{{.Error}}</div>{{end}}
+{{if .Done}}<div class="alert alert-success" role="status">{{$L.T "import.done" .Done.FileName}}</div>{{end}}
+
+<section class="card">
+  <p>{{$L.T "import.help"}}</p>
+  <p class="note">{{$L.T "import.replace_note"}}</p>
+  <form method="post" action="/import/preview" enctype="multipart/form-data">
+    <label for="file">{{$L.T "import.file_label"}}</label>
+    <input id="file" name="file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required>
+    <button type="submit">{{$L.T "import.preview_button"}}</button>
+  </form>
+</section>
+
+<h2>{{$L.T "import.history"}}</h2>
+{{if .History}}
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr>
+      <th>{{$L.T "import.col.date"}}</th>
+      <th>{{$L.T "import.col.file"}}</th>
+      <th class="num">{{$L.T "import.col.rows"}}</th>
+      <th>{{$L.T "common.children"}} <small class="muted">({{$L.T "import.changes_legend"}})</small></th>
+      <th>{{$L.T "common.parents"}}</th>
+    </tr>
+  </thead>
+  <tbody>
+  {{range .History}}
+    <tr>
+      <td>{{$L.Date .ImportedAt}}</td>
+      <td>{{.FileName}}</td>
+      <td class="num">{{.RowsRead}}</td>
+      <td>{{$L.T "import.changes_short" .Children.Added .Children.Updated .Children.Deleted}}</td>
+      <td>{{$L.T "import.changes_short" .Parents.Added .Parents.Updated .Parents.Deleted}}</td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}
+  <p class="muted">{{$L.T "import.history_empty"}}</p>
+{{end}}
+{{end}}{{end}}

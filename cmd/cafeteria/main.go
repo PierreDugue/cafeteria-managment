@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"cafeteria-management/internal/server"
+	"cafeteria-management/internal/store"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
@@ -28,9 +29,28 @@ func main() {
 
 func run() error {
 	port := flag.Int("port", 8080, "port to listen on")
+	dbPath := flag.String("db", "", "database file (default: in the user's app data folder)")
 	flag.Parse()
 
-	srv, err := server.New(version)
+	if *dbPath == "" {
+		p, err := store.DefaultPath()
+		if err != nil {
+			return err
+		}
+		*dbPath = p
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	st, err := store.Open(ctx, *dbPath)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	slog.Info("database opened", "path", *dbPath)
+
+	srv, err := server.New(version, st)
 	if err != nil {
 		return err
 	}
@@ -42,9 +62,6 @@ func run() error {
 		Handler:           srv,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	errCh := make(chan error, 1)
 	go func() {
