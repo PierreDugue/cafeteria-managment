@@ -317,7 +317,11 @@ Status: ✅ implemented (plan `docs/plans/003-email-composition.md`).
   (control characters; in the subject also line breaks and tabs). An email
   is never sent with a raw `{{…}}` left in it.
 - **Limits**: subject 255 characters, body 20,000 characters, template name
-  80 characters. All three are required for a template.
+  80 characters. All three are required for a template. The subject limit
+  also applies **after placeholders are replaced**, for each recipient: a
+  longer rendered subject blocks the preview of that recipient and the
+  sending (with the number of recipients concerned and one example
+  address); it is never cut (plan 005).
 - **Templates**: save a message as a named template (from the compose page
   or the templates pages), reuse and edit it later, delete it with a
   confirmation. Names are unique ignoring case, accents and extra spaces.
@@ -332,18 +336,75 @@ Status: ✅ implemented (plan `docs/plans/003-email-composition.md`).
 
 ### 4.4 Sending
 
+Status: plan `docs/plans/005-sending.md` approved (milestone 5b, test mode
+only). Decisions confirmed by the user, 2026-11-16.
+
 - Grouping: if several selected children share a parent, that parent receives
   **one** email mentioning all of them.
-- Confirmation step before sending ("Send 12 emails?").
-- Sending runs in the background with progress shown in the page.
-- Small delay between emails to stay within provider rate limits.
-- Each email gets a status: `pending`, `sent`, `failed` (with error message).
-- Failed emails can be retried.
+- **Confirmation step**: the compose page has an "Envoyer…" button. The
+  server checks the selection (§4.2 "stale selection") and the message
+  (§4.3), then shows a confirmation page: "Envoyer 12 email(s) ?" (family
+  data: "…, un par adresse ?"), the list name, the subject and body, the
+  first recipient's email as an example, the recipients, and "Gardez
+  l'application ouverte pendant l'envoi (environ N minute(s))". Buttons
+  "Envoyer les N emails" and "Modifier le message". Nothing is stored
+  before the final confirmation.
+- **The final confirmation re-checks everything** (selection still current,
+  message without problems) and stores the batch and all its emails in one
+  transaction, with the final rendered text of each email.
+- **Never twice by accident**: each confirmation page carries a one-time
+  token; a double-click, a reload, a back-and-resubmit or a duplicated tab
+  of the same confirmation page lead to the same batch. Two confirmations
+  made separately (two clicks on "Envoyer…") are two batches, with no
+  extra warning.
+- Sending runs **in the background**, one email at a time, with a small
+  delay between emails to stay within provider rate limits (§5.1) and a
+  wait when the provider asks for one (HTTP 429). **One batch at a time**,
+  in confirmation order; a later batch shows "En attente : un autre envoi
+  est en cours".
+- **Progress page** (the batch page, §4.5): refreshed every 3 s by the page
+  itself (plain meta refresh, no JavaScript; htmx later) while the batch is
+  sending, with a progress bar and the sent / failed / pending counts.
+- Each email gets a status: `pending`, `sending` (being sent), `sent`,
+  `failed` (with an error type and the provider's error text).
+- **Stop and resume**: "Arrêter l'envoi" stops after the email in flight;
+  "Reprendre l'envoi" sends the pending emails.
+- **Failed emails can be retried** ("Renvoyer les N emails en échec"):
+  the same stored text goes to the same stored address, even after a
+  re-import or the deletion of the list.
+- **App closed or crashed during a sending**: the sending is **not**
+  resumed automatically. At the next start, if emails remain to send, the
+  batch shows "Interrompu" and the home page says "N envoi(s)
+  interrompu(s)"; the user clicks "Reprendre l'envoi". The email that was being sent at that moment is
+  marked failed with "état inconnu" (maybe delivered, maybe not): the user
+  checks their sent items before retrying it. When the app is closed
+  normally, the email in flight is finished and recorded first.
+- If the email account cannot send at all (not signed in, access revoked),
+  the batch stops with that reason and nothing is marked failed; the user
+  resumes after fixing the account (providers come in milestones 6 / 6b).
+- **Test mode** (milestone 5b): the only sender until Microsoft 365 is
+  added. It sends nothing and only records the emails in the history (no
+  `.eml` files). It cannot be missed: a banner on the confirmation and
+  batch pages, a "Test" badge in the history, and the status "Enregistré
+  (test)" instead of "Envoyé". Each batch records its provider.
 
 ### 4.5 History
 
-- List of sending batches: date, subject, number sent / failed.
-- Detail per batch: recipients, children concerned, status.
+Status: plan `docs/plans/005-sending.md` approved.
+
+- **History list** (nav item "Historique"): one line per batch, newest
+  first, the last 100 (with a note when there are more): date, subject as
+  typed, list name, sent / failed / pending counts, status, "Test" badge.
+- **Batch page** (also the progress page, §4.4): status, counts, the
+  actions that apply (stop, resume, retry), date, list name, subject and
+  body as typed, and one line per recipient: name, address, families or
+  children concerned, status, error type and the provider's error text,
+  sent time, and a link to the email.
+- **Email page**: one email exactly as stored (to, subject, body).
+- History keeps copies of the list name (at sending time), names, family
+  numbers, addresses and the final texts, so it stays complete after a
+  re-import, a list rename or a list deletion (§4.0, §4.1). Imports never
+  change or erase it. Deleting history is not available.
 
 ### 4.6 Settings
 
@@ -402,10 +463,25 @@ Gmail limit: about 500 emails/day for a personal account.
 
 ### 5.3 Code design
 
-One `Sender` interface (`Send(ctx, Message) error`) with two implementations:
-`graphSender` and `smtpSender`. The sending queue, history and UI only know the
-interface, so providers can be added without touching the rest of the app.
-Tests use a fake sender; no real email is ever sent from tests.
+Package `internal/mailer` owns the `Sender` interface and the sending queue
+(plan 005).
+
+- One `Sender` interface (`Send(ctx, Message) error`). `Message` has a
+  structured recipient (`net/mail.Address`: name and address, used through
+  the provider's own fields, never a header built by concatenation), a
+  one-line subject and a plain-text body. No `From`: the sender is the
+  connected account.
+- Errors: `RateLimitError` (provider asks to wait, with `RetryAfter`; the
+  email was not sent) and `ErrAccount` (the account cannot send at all).
+  Any other error fails that email only.
+- Implementations: `TestSender` (milestone 5b, sends nothing), then
+  `graphSender` (6) and `smtpSender` (6b). The queue, history and UI only
+  know the interface, so providers are added without touching the rest of
+  the app.
+- The queue is one goroutine; the database is the queue (messages
+  `pending` → `sending` → `sent` / `failed`), so nothing is lost or sent
+  twice by itself across a restart.
+- Tests use a fake sender; no real email is ever sent from tests.
 
 ## 6. Localization
 
@@ -458,12 +534,33 @@ last_selection child_id (PK, references children, ON DELETE CASCADE)
                -- the cascade drops entries deleted by an import
 templates      id, name, name_key (unique), subject, body, created_at, updated_at
                -- name_key = name without case/accents/extra spaces; body plain text
-batches        id, subject, body, created_at, status
-messages       id, batch_id, parent_id (nullable), parent_name, to_email,
-               subject, body, status, error, sent_at
-message_children  message_id, child_id (nullable), child_name
+batches        id (AUTOINCREMENT, never reused), token (unique, one-time
+               confirmation token), list_id (nullable, ON DELETE SET NULL),
+               list_name (copy at sending time), list_version, families,
+               provider ('test', later 'graph', 'smtp'), subject, body
+               (as typed, with placeholders), status (sending | stopped |
+               done), stop_reason ('' | user | interrupted | account),
+               created_at, finished_at
+messages       id, batch_id (ON DELETE CASCADE), parent_id (nullable,
+               ON DELETE SET NULL), to_name (the {{parent_name}} value),
+               to_email, subject, body (final rendered text), status
+               (pending | sending | sent | failed), error_code ('' | send |
+               rate_limited | account | unknown), error (provider text,
+               cleaned, at most 500 characters), attempts, sent_at,
+               updated_at
+               -- indexes on (batch_id, status), (status, batch_id, id),
+               --   parent_id
+message_children  message_id (ON DELETE CASCADE), position, child_id
+               (nullable, ON DELETE SET NULL), child_name (child name or
+               billing name, copy), family_number (copy)
+               -- primary key (message_id, position); index on child_id
 settings       key, value
 ```
+
+The `batches`, `messages` and `message_children` tables come with migration
+006 (plan 005). Batch counts are computed from `messages`, never stored.
+The indexes on `messages.parent_id` and `message_children.child_id` keep the
+`SET NULL` of an import's deletions fast.
 
 - Schema versioned with embedded SQL migrations, applied on startup.
 - `messages` stores the final rendered text, so the history shows exactly what
@@ -478,6 +575,9 @@ settings       key, value
 - Children's data never leaves the computer except inside the emails sent.
 - Secrets (SMTP password, OAuth refresh token) stored in the OS keychain
   (macOS Keychain, Windows Credential Manager), not in the database.
+- Email history (names, addresses, texts, provider error texts) lives in the
+  database only. Logs carry IDs, counts and error codes only: never names,
+  addresses, subjects, bodies or provider error texts. URLs carry IDs only.
 - No telemetry.
 
 ## 9. Technical choices
@@ -545,7 +645,8 @@ The app starts as a browser tab. It may later run in its own window with
    existing list, selection per list (§4.0; plan 004). ✅
 5. **Compose & send**
    - 5a. **Compose** — templates, placeholders, preview (plan 003). ✅
-   - 5b. **Send** — confirmation, sending queue (fake sender), history.
+   - 5b. **Send** — confirmation, sending queue with a test-mode sender
+     (records only), stop / resume / retry, history (plan 005). ✅
 6. **Microsoft 365** — Microsoft sign-in and Graph sending.
 6b. **SMTP** — Gmail / custom SMTP sender.
 7. **i18n** — FR/EN translation files and language switch.

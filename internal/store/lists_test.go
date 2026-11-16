@@ -201,7 +201,7 @@ func TestMigration005KeepsExistingData(t *testing.T) {
 		t.Errorf("integrity_check = %q, %v", ic, err)
 	}
 	var v int
-	if err := s.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&v); err != nil || v != 5 {
+	if err := s.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&v); err != nil || v < 5 {
 		t.Errorf("schema version = %d, %v", v, err)
 	}
 

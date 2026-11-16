@@ -12,9 +12,11 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/xuri/excelize/v2"
 
+	"cafeteria-management/internal/mailer"
 	"cafeteria-management/internal/store"
 )
 
@@ -35,7 +37,7 @@ func newTestServerAt(t *testing.T) (*Server, *store.Store, string) {
 	}
 	t.Cleanup(func() { st.Close() })
 
-	s, err := New("test", st)
+	s, err := New("test", st, &fakeQueue{provider: mailer.ProviderTest, interval: 500 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}

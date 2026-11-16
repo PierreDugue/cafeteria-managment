@@ -14,8 +14,9 @@ Done: SQLite storage with migrations, Excel import with preview (SPEC §4.1),
 minimal FR/EN i18n, child list and selection (§4.2), CSV import of the
 families software export (§4.1.1, plan `docs/plans/002-csv-import.md`),
 email composition with templates and preview (§4.3, plan 003), named
-family lists (§4.0, plan 004). Next: sending (§4.4), reading the
-"Notes for §4.4" in plan 003 first. See the milestones in `docs/SPEC.md` §11.
+family lists (§4.0, plan 004), sending in test mode with history (§4.4,
+§4.5, plan 005). Next: Microsoft 365 sending via Graph (milestone 6).
+See the milestones in `docs/SPEC.md` §11.
 
 ## Commands
 
@@ -37,7 +38,8 @@ internal/server/   HTTP routes, handlers, localhost/CSRF protection
 internal/store/    SQLite access; migrations in store/migrations/NNN_*.sql
 internal/importer/ Excel parsing and row validation (no DB access)
 internal/recipients/ groups selected children into one recipient per parent
-internal/message/  placeholders: checks and rendering of one email (no DB/HTTP)
+internal/message/  placeholders: checks and rendering of the emails (no DB/HTTP)
+internal/mailer/   Sender interface, test sender, background sending queue (no HTTP)
 internal/i18n/     translations loader (Localizer.T in templates)
 internal/textnorm/ name normalization for matching (case, accents, spaces)
 web/templates/     layout.html + one file per page

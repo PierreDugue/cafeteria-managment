@@ -1,0 +1,11 @@
+{{define "title"}}{{.L.T "history.message_title"}}{{end}}
+{{define "content"}}{{$L := .L}}{{with .Data}}
+<h1>{{$L.T "history.message_title"}}</h1>
+{{if .Test}}<div class="alert test-banner" role="status">{{$L.T "send.test_banner"}}</div>{{end}}
+<div class="preview">
+  <p><strong>{{$L.T "compose.preview_to"}}</strong> {{.Message.ToName}} &lt;{{.Message.ToEmail}}&gt;</p>
+  <p><strong>{{$L.T "compose.subject"}}</strong> {{.Message.Subject}}</p>
+  <div class="preview-body">{{.Message.Body}}</div>
+</div>
+<p class="actions"><a class="button button-secondary" href="/history/{{.Batch.ID}}">{{$L.T "history.back"}}</a></p>
+{{end}}{{end}}

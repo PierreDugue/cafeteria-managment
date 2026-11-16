@@ -505,7 +505,7 @@ func TestComposeRefusesEntryWithoutEmail(t *testing.T) {
 
 		postCompose(s, formV(t, st, ids["NOMAIL"]))
 		out := buf.String()
-		if !strings.Contains(out, "compose: entry without a valid email selected") || !strings.Contains(out, fmt.Sprintf("id=%d", ids["NOMAIL"])) {
+		if !strings.Contains(out, "entry without a valid email selected") || !strings.Contains(out, fmt.Sprintf("id=%d", ids["NOMAIL"])) {
 			t.Errorf("log = %q", out)
 		}
 		for _, secret := range []string{"secret.bad", "NOMAIL", "a@example.com"} {

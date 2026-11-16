@@ -112,8 +112,8 @@ func TestCheckOK(t *testing.T) {
 func TestCheckProblems(t *testing.T) {
 	long40 := strings.Repeat("a", 40)
 	long41 := strings.Repeat("a", 41)
-	sub := func(k Kind, tok string) Problem { return Problem{FieldSubject, k, tok} }
-	bod := func(k Kind, tok string) Problem { return Problem{FieldBody, k, tok} }
+	sub := func(k Kind, tok string) Problem { return Problem{Field: FieldSubject, Kind: k, Token: tok} }
+	bod := func(k Kind, tok string) Problem { return Problem{Field: FieldBody, Kind: k, Token: tok} }
 
 	tests := []struct {
 		name, subject, body string
@@ -444,6 +444,141 @@ func TestProblemTokensNeverEchoControlCharacters(t *testing.T) {
 		ps := Check("s", "{{a\xff\xfeb}}", AnyMode)
 		if len(ps) != 1 || ps[0].Kind != KindInvalidChar || ps[0].Token != "" {
 			t.Errorf("problems = %+v", ps)
+		}
+	})
+}
+
+// ---- RenderAll (plan 005) -------------------------------------------------
+
+func namedRecipient(id int64, name, email string) recipients.Recipient {
+	return recipients.Recipient{ParentID: id, ParentName: name, Email: email,
+		Children: []string{"Léa"}, ChildIDs: []int64{id * 10}, FamilyNumbers: []string{""}}
+}
+
+func TestRenderAllMatchesRenderOneByOne(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		rs   []recipients.Recipient
+		m    Mode
+	}{
+		{"children", []recipients.Recipient{childRecipient("Léa", "Tom"), namedRecipient(2, "Éloïse Durand", "e@example.com")}, ChildMode},
+		{"families", []recipients.Recipient{
+			familyRecipient([2]string{"1234", "SILVA Ana"}, [2]string{"1250", "SILVA Rui"}),
+			familyRecipient([2]string{"10", "DUPONT"}),
+		}, FamilyMode},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			subject, body := "Pour {{parent_name}}", "Bonjour {{parent_name}}"
+			if tt.m == FamilyMode {
+				subject, body = "Famille {{family_number}}", "Cher {{parent_name}} ({{family_number}})"
+			}
+			got, problems, err := RenderAll(subject, body, tt.rs, tt.m, "et")
+			if err != nil || problems != nil {
+				t.Fatalf("err = %v, problems = %+v", err, problems)
+			}
+			if len(got) != len(tt.rs) {
+				t.Fatalf("emails = %d, want %d", len(got), len(tt.rs))
+			}
+			for i, r := range tt.rs {
+				want, err := Render(subject, body, r, tt.m, "et")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(got[i], want) {
+					t.Errorf("email %d = %+v, want %+v", i, got[i], want)
+				}
+			}
+		})
+	}
+}
+
+func TestRenderAllFamilyNumbersCopied(t *testing.T) {
+	r := familyRecipient([2]string{"10", "A"}, [2]string{"20", "B"})
+	got, _, err := RenderAll("s", "b", []recipients.Recipient{r}, FamilyMode, "et")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got[0].FamilyNumbers, []string{"10", "20"}) {
+		t.Fatalf("FamilyNumbers = %v", got[0].FamilyNumbers)
+	}
+	got[0].FamilyNumbers[0] = "x"
+	if r.FamilyNumbers[0] != "10" {
+		t.Error("FamilyNumbers shares memory with the recipient")
+	}
+}
+
+func TestRenderAllProblemsGiveNoEmails(t *testing.T) {
+	rs := []recipients.Recipient{childRecipient("Léa")}
+	emails, problems, err := RenderAll("s", "{{parent_nam}}", rs, ChildMode, "et")
+	if err != nil || emails != nil || len(problems) != 1 || problems[0].Kind != KindUnknown {
+		t.Fatalf("emails = %v, problems = %+v, err = %v", emails, problems, err)
+	}
+	emails, problems, err = RenderAll("", "b", rs, ChildMode, "et")
+	if err != nil || emails != nil || len(problems) != 1 || problems[0].Kind != KindEmpty {
+		t.Fatalf("emails = %v, problems = %+v, err = %v", emails, problems, err)
+	}
+}
+
+func TestRenderAllBadMode(t *testing.T) {
+	for _, m := range []Mode{AnyMode, Mode(99)} {
+		if _, _, err := RenderAll("s", "b", []recipients.Recipient{childRecipient("Léa")}, m, "et"); err == nil {
+			t.Errorf("mode %v: want an error", m)
+		}
+	}
+}
+
+func TestRenderAllEmptyRecipients(t *testing.T) {
+	emails, problems, err := RenderAll("s", "b", nil, ChildMode, "et")
+	if err != nil || problems != nil || len(emails) != 0 {
+		t.Fatalf("emails = %v, problems = %v, err = %v", emails, problems, err)
+	}
+}
+
+func TestRenderAllSubjectLimit(t *testing.T) {
+	sub := "{{parent_name}}"
+	t.Run("exactly 255 runes is accepted (runes, not bytes)", func(t *testing.T) {
+		rs := []recipients.Recipient{namedRecipient(1, strings.Repeat("é", 255), "a@example.com")}
+		emails, problems, err := RenderAll(sub, "b", rs, ChildMode, "et")
+		if err != nil || problems != nil || utf8.RuneCountInString(emails[0].Subject) != 255 {
+			t.Fatalf("problems = %+v, err = %v", problems, err)
+		}
+		if len(emails[0].Subject) <= 255 {
+			t.Fatal("test must use multi-byte runes")
+		}
+	})
+	t.Run("256 runes is one problem with the first address and the count", func(t *testing.T) {
+		rs := []recipients.Recipient{
+			namedRecipient(1, "Court", "ok@example.com"),
+			namedRecipient(2, strings.Repeat("é", 256), "first@example.com"),
+			namedRecipient(3, strings.Repeat("é", 300), "second@example.com"),
+		}
+		emails, problems, err := RenderAll(sub, "b", rs, ChildMode, "et")
+		if err != nil || emails != nil {
+			t.Fatalf("emails = %v, err = %v", emails, err)
+		}
+		want := []Problem{{Field: FieldSubject, Kind: KindRenderedTooLong, Recipient: "first@example.com", Count: 2}}
+		if !reflect.DeepEqual(problems, want) {
+			t.Fatalf("problems = %+v, want %+v", problems, want)
+		}
+	})
+	t.Run("counted after headerSafe", func(t *testing.T) {
+		// 254 letters + 10 spaces collapse to 255 runes with one more space.
+		name := strings.Repeat("a", 127) + strings.Repeat(" ", 10) + strings.Repeat("b", 127)
+		rs := []recipients.Recipient{namedRecipient(1, name, "a@example.com")}
+		emails, problems, err := RenderAll(sub, "b", rs, ChildMode, "et")
+		if err != nil || problems != nil {
+			t.Fatalf("problems = %+v, err = %v", problems, err)
+		}
+		if n := utf8.RuneCountInString(emails[0].Subject); n != 255 {
+			t.Fatalf("runes = %d", n)
+		}
+	})
+	t.Run("typed subject at the cap still fails when the value grows it", func(t *testing.T) {
+		long := strings.Repeat("x", 240) + "{{parent_name}}" // 255 runes typed
+		rs := []recipients.Recipient{namedRecipient(1, strings.Repeat("é", 20), "a@example.com")}
+		_, problems, err := RenderAll(long, "b", rs, ChildMode, "et")
+		if err != nil || len(problems) != 1 || problems[0].Kind != KindRenderedTooLong || problems[0].Count != 1 {
+			t.Fatalf("problems = %+v, err = %v", problems, err)
 		}
 	})
 }

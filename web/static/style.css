@@ -129,3 +129,12 @@ code { background: var(--surface); border: 1px solid var(--border); border-radiu
 .card form .field { flex: 1 1 100%; margin: 0; }
 .confirm-check { flex-basis: 100%; margin: 0 0 8px; }
 .confirm-check input { margin-right: 6px; }
+
+/* Sending and history (SPEC §4.4, §4.5) */
+.test-banner { background: var(--warning-bg); border: 1px solid var(--warning-border); color: var(--warning-text); font-weight: 600; }
+progress { width: 100%; max-width: 480px; height: 16px; }
+.badge { display: inline-block; padding: 0 8px; border-radius: 999px; font-size: 13px; border: 1px solid var(--border); }
+.badge-sent { background: var(--success-bg); color: var(--accent); }
+.badge-failed { background: var(--danger-bg); color: var(--danger); }
+.badge-pending, .badge-sending { background: var(--surface); color: var(--muted); }
+.badge-test { background: var(--warning-bg); border-color: var(--warning-border); color: var(--warning-text); }

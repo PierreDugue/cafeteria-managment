@@ -19,7 +19,7 @@ import (
 )
 
 // pageNames are the templates in web/templates rendered inside layout.html.
-var pageNames = []string{"home", "import", "import_preview", "children", "compose", "templates", "template_form", "template_delete", "list_rename", "list_delete"}
+var pageNames = []string{"home", "import", "import_preview", "children", "compose", "templates", "template_form", "template_delete", "list_rename", "list_delete", "send_confirm", "history", "history_batch", "history_message"}
 
 // Server serves the web UI.
 type Server struct {
@@ -28,11 +28,12 @@ type Server struct {
 	i18n    *i18n.Bundle
 	pages   map[string]*template.Template
 	pending *pendingImports
+	queue   queue
 	handler http.Handler
 }
 
 // New builds the server. st must stay open while the server runs.
-func New(version string, st *store.Store) (*Server, error) {
+func New(version string, st *store.Store, q queue) (*Server, error) {
 	bundle, err := i18n.Load(web.FS)
 	if err != nil {
 		return nil, err
@@ -48,6 +49,7 @@ func New(version string, st *store.Store) (*Server, error) {
 		i18n:    bundle,
 		pages:   pages,
 		pending: newPendingImports(30 * time.Minute),
+		queue:   q,
 	}
 
 	mux := http.NewServeMux()
@@ -67,6 +69,13 @@ func New(version string, st *store.Store) (*Server, error) {
 	mux.HandleFunc("POST /import/confirm", s.handleImportConfirm)
 	mux.HandleFunc("GET /children", s.handleChildren)
 	mux.HandleFunc("POST /compose", s.handleCompose)
+	mux.HandleFunc("POST /send", s.handleSend)
+	mux.HandleFunc("GET /history", s.handleHistory)
+	mux.HandleFunc("GET /history/{id}", s.handleHistoryBatch)
+	mux.HandleFunc("GET /history/{id}/messages/{mid}", s.handleHistoryMessage)
+	mux.HandleFunc("POST /history/{id}/stop", s.handleBatchStop)
+	mux.HandleFunc("POST /history/{id}/resume", s.handleBatchResume)
+	mux.HandleFunc("POST /history/{id}/retry", s.handleBatchRetry)
 	mux.HandleFunc("GET /templates", s.handleTemplates)
 	mux.HandleFunc("GET /templates/new", s.handleTemplateNew)
 	mux.HandleFunc("POST /templates", s.handleTemplateCreate)
@@ -89,6 +98,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func parsePages() (map[string]*template.Template, error) {
 	funcs := template.FuncMap{
 		// issues packs the arguments of the "issues" sub-template.
+		// batchStatus, messageStatus and messageError give the localized
+		// status texts of the history pages.
+		"batchStatus":   batchStatusText,
+		"messageStatus": messageStatusText,
+		"messageError":  messageErrorText,
 		"issues": func(l i18n.Localizer, is []importer.Issue) any {
 			return struct {
 				L      i18n.Localizer

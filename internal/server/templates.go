@@ -50,9 +50,13 @@ func validateTemplate(loc i18n.Localizer, name, subject, body string) (cleanName
 	return cleanName, errs, problems
 }
 
-// parsePathID reads the {id} of a route (template or list); it must be a positive integer.
-func parsePathID(r *http.Request) (int64, bool) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+// parsePathID reads the {id} of a route (template, list or batch); it must
+// be a positive integer.
+func parsePathID(r *http.Request) (int64, bool) { return pathInt(r, "id") }
+
+// pathInt reads the positive integer wildcard name of a route.
+func pathInt(r *http.Request, name string) (int64, bool) {
+	id, err := strconv.ParseInt(r.PathValue(name), 10, 64)
 	return id, err == nil && id > 0
 }
 

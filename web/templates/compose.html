@@ -106,7 +106,9 @@
     </div>
   </div>
 
-  <p class="note">{{$L.T "compose.next_step"}}</p>
+  <div class="actions">
+    <button type="submit" name="action" value="send">{{$L.T "compose.send_button"}}</button>
+  </div>
 </form>
 <p class="actions"><a class="button button-secondary" href="/children?list={{.ListID}}">{{$L.T "compose.back"}}</a></p>
 {{end}}{{end}}

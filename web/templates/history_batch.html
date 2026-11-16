@@ -1,0 +1,68 @@
+{{define "title"}}{{.L.T "history.title"}}{{end}}
+{{define "scripts"}}{{if eq .Data.Batch.Status "sending"}}<meta http-equiv="refresh" content="3">{{end}}{{end}}
+{{define "content"}}{{$L := .L}}{{with .Data}}
+<h1>{{$L.T "history.batch_title" ($L.Date .Batch.CreatedAt)}}</h1>
+
+{{if .Test}}<div class="alert test-banner" role="status">{{$L.T "send.test_banner"}}</div>{{end}}
+{{if .Started}}<div class="alert alert-success" role="status">{{$L.T "history.started"}}</div>{{end}}
+{{if .Stopped}}<div class="alert alert-success" role="status">{{$L.T "history.stopped_notice"}}</div>{{end}}
+{{if .Resumed}}<div class="alert alert-success" role="status">{{$L.T "history.resumed_notice"}}</div>{{end}}
+{{if .Retried}}<div class="alert alert-success" role="status">{{$L.T "history.retried_notice" .Retried}}</div>{{end}}
+{{if .Batch.Waiting}}<div class="alert alert-warning" role="status">{{$L.T "history.waiting"}}</div>{{end}}
+
+<p><strong>{{batchStatus $L .Batch}}</strong>
+  {{if eq .Batch.Status "sending"}}· <a href="/history/{{.Batch.ID}}">{{$L.T "history.refresh"}}</a>{{end}}</p>
+<p><progress value="{{.Done}}" max="{{.Batch.Total}}">{{.Done}} / {{.Batch.Total}}</progress></p>
+<p>{{$L.T "history.progress" .Batch.Sent .Batch.Failed .Batch.Pending}}</p>
+
+<div class="actions">
+  {{if eq .Batch.Status "sending"}}
+  <form method="post" action="/history/{{.Batch.ID}}/stop"><button type="submit" class="button-secondary">{{$L.T "history.stop"}}</button></form>
+  {{end}}
+  {{if and (eq .Batch.Status "stopped") .Batch.Pending}}
+  <form method="post" action="/history/{{.Batch.ID}}/resume"><button type="submit">{{$L.T "history.resume" .Batch.Pending}}</button></form>
+  {{end}}
+  {{if .Batch.Failed}}
+  <form method="post" action="/history/{{.Batch.ID}}/retry"><button type="submit" class="button-secondary">{{$L.T "history.retry" .Batch.Failed}}</button></form>
+  {{end}}
+</div>
+
+<p class="muted">{{$L.T "compose.list" .Batch.ListName}}</p>
+<div class="preview">
+  <p><strong>{{$L.T "compose.subject"}}</strong> {{.Batch.Subject}}</p>
+  <div class="preview-body">{{.Batch.Body}}</div>
+</div>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr>
+      <th>{{$L.T "history.col.recipient"}}</th>
+      <th>{{$L.T "compose.col.email"}}</th>
+      <th>{{if .Batch.Families}}{{$L.T "compose.col.families"}}{{else}}{{$L.T "compose.col.children"}}{{end}}</th>
+      <th>{{$L.T "history.col.status"}}</th>
+      <th>{{$L.T "history.col.sent_at"}}</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+  {{$provider := .Batch.Provider}}
+  {{range .Messages}}
+    <tr>
+      <td>{{.ToName}}</td>
+      <td>{{.ToEmail}}</td>
+      <td>{{range $i, $c := .Children}}{{if $i}}, {{end}}{{if $c.FamilyNumber}}{{$c.FamilyNumber}} {{end}}{{$c.Name}}{{end}}</td>
+      <td>
+        <span class="badge badge-{{.Status}}">{{messageStatus $L $provider .}}</span>
+        {{with messageError $L .}}<br><span class="danger">{{.}}</span>{{end}}
+        {{if .Error}}<br><span class="note">{{.Error}}</span>{{end}}
+      </td>
+      <td>{{$L.Date .SentAt}}</td>
+      <td class="row-actions"><a href="/history/{{.BatchID}}/messages/{{.ID}}">{{$L.T "history.view_message"}}</a></td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+<p class="actions"><a class="button button-secondary" href="/history">{{$L.T "history.title"}}</a></p>
+{{end}}{{end}}

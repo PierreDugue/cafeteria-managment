@@ -11,9 +11,10 @@ import (
 const maxListFormBytes = 1 << 20
 
 type homeData struct {
-	Lists  []store.List
-	Error  string
-	Notice string
+	Lists       []store.List
+	Error       string
+	Notice      string
+	Interrupted int // batches stopped by a closed app, to resume
 }
 
 type listFormData struct {
@@ -47,7 +48,12 @@ func (s *Server) renderHome(w http.ResponseWriter, r *http.Request, status int, 
 		s.serverError(w, r, err)
 		return
 	}
-	s.render(w, r, status, "home", "home", homeData{Lists: lists, Error: errMsg, Notice: notice})
+	interrupted, err := s.store.InterruptedBatches(r.Context())
+	if err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+	s.render(w, r, status, "home", "home", homeData{Lists: lists, Error: errMsg, Notice: notice, Interrupted: interrupted})
 }
 
 func (s *Server) listNotFound(w http.ResponseWriter, r *http.Request) {

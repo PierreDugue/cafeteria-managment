@@ -5,6 +5,8 @@
 {{if .Error}}<div class="alert alert-error" role="alert">{{.Error}}</div>{{end}}
 {{if .Notice}}<div class="alert alert-success" role="status">{{.Notice}}</div>{{end}}
 
+{{if .Interrupted}}<div class="alert alert-warning" role="status"><a href="/history">{{$L.T "home.interrupted" .Interrupted}}</a></div>{{end}}
+
 {{if .Lists}}
 <h2>{{$L.T "lists.title"}}</h2>
 <div class="table-wrap">

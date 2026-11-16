@@ -89,6 +89,9 @@ const (
 	KindEmpty       Kind = "empty"
 	KindTooLong     Kind = "too_long"
 	KindInvalidChar Kind = "invalid_char"
+	// KindRenderedTooLong: the subject is longer than MaxSubjectLen once the
+	// placeholders are replaced for some recipients (see RenderAll).
+	KindRenderedTooLong Kind = "rendered_too_long"
 )
 
 // Problem is one thing to fix before the message can be used.
@@ -96,6 +99,11 @@ type Problem struct {
 	Field Field
 	Kind  Kind
 	Token string // as written, cut to 40 runes; "" for empty, too_long, invalid_char
+
+	// Only for KindRenderedTooLong: the address of the first recipient
+	// concerned and how many recipients are concerned.
+	Recipient string
+	Count     int
 }
 
 // Normalize returns subject and body with "\n" line endings, the subject
@@ -281,42 +289,80 @@ type Email struct {
 	Body       string // plain text, "\n" line endings
 	ChildIDs   []int64
 	ChildNames []string // family mode: billing names of the entries
+	// FamilyNumbers is parallel to ChildIDs; "" for children data.
+	FamilyNumbers []string
 }
 
-// ErrProblems is returned by Render when Check reports problems.
+// ErrProblems is returned by Render when RenderAll reports problems.
 var ErrProblems = errors.New("message has problems")
 
-// Render renders subject and body for r in mode m (ChildMode or FamilyMode).
-// and is the joining word of the interface language ("et" / "and").
+// Render renders subject and body for one recipient (see RenderAll). It
+// returns ErrProblems when the message has problems.
+func Render(subject, body string, r recipients.Recipient, m Mode, and string) (Email, error) {
+	emails, problems, err := RenderAll(subject, body, []recipients.Recipient{r}, m, and)
+	if err != nil {
+		return Email{}, err
+	}
+	if problems != nil {
+		return Email{}, ErrProblems
+	}
+	return emails[0], nil
+}
+
+// RenderAll checks the message once and renders it for every recipient of rs
+// in mode m (ChildMode or FamilyMode); and is the joining word of the
+// interface language ("et" / "and"). With problems it returns them and no
+// emails: the problems of Check, or one KindRenderedTooLong if the subject
+// of some recipients is longer than MaxSubjectLen once rendered (counted in
+// runes, after headerSafe). A subject is never cut. The error is only for a
+// mode that is not a data mode.
 //
 // The result is plain text only and values are not escaped: a future HTML
 // body must escape values when they are substituted.
-func Render(subject, body string, r recipients.Recipient, m Mode, and string) (Email, error) {
+func RenderAll(subject, body string, rs []recipients.Recipient, m Mode, and string) ([]Email, []Problem, error) {
 	if m != ChildMode && m != FamilyMode {
-		return Email{}, fmt.Errorf("render: mode %d is not a data mode", m)
+		return nil, nil, fmt.Errorf("render: mode %d is not a data mode", m)
 	}
-	if Check(subject, body, m) != nil {
-		return Email{}, ErrProblems
+	if problems := Check(subject, body, m); problems != nil {
+		return nil, problems, nil
 	}
 	subject, body = Normalize(subject, body)
-	vals := values(r, m, and)
-	return Email{
-		ParentID:   r.ParentID,
-		ToName:     headerSafe(vals[ParentName]),
-		To:         r.Email,
-		Subject:    headerSafe(substitute(subject, vals)),
-		Body:       substitute(body, vals),
-		ChildIDs:   append([]int64(nil), r.ChildIDs...),
-		ChildNames: append([]string(nil), r.Children...),
-	}, nil
+	subjectSegs, bodySegs := scan(subject), scan(body)
+
+	emails := make([]Email, len(rs))
+	tooLong := Problem{Field: FieldSubject, Kind: KindRenderedTooLong}
+	for i, r := range rs {
+		vals := values(r, m, and)
+		emails[i] = Email{
+			ParentID:      r.ParentID,
+			ToName:        headerSafe(vals[ParentName]),
+			To:            r.Email,
+			Subject:       headerSafe(substitute(subjectSegs, vals)),
+			Body:          substitute(bodySegs, vals),
+			ChildIDs:      append([]int64(nil), r.ChildIDs...),
+			ChildNames:    append([]string(nil), r.Children...),
+			FamilyNumbers: append([]string(nil), r.FamilyNumbers...),
+		}
+		if utf8.RuneCountInString(emails[i].Subject) > MaxSubjectLen {
+			if tooLong.Count == 0 {
+				tooLong.Recipient = r.Email
+			}
+			tooLong.Count++
+		}
+	}
+	if tooLong.Count > 0 {
+		return nil, []Problem{tooLong}, nil
+	}
+	return emails, nil, nil
 }
 
-// substitute replaces the tokens of text. Values are appended and never
-// scanned again. Check has already refused unknown tokens and malformed
-// text, so a missing value cannot happen; it is kept as written if it does.
-func substitute(text string, vals map[string]string) string {
+// substitute replaces the tokens of a scanned text. Values are appended and
+// never scanned again. Check has already refused unknown tokens and
+// malformed text, so a missing value cannot happen; it is kept as written
+// if it does.
+func substitute(segs []segment, vals map[string]string) string {
 	var b strings.Builder
-	for _, seg := range scan(text) {
+	for _, seg := range segs {
 		switch {
 		case seg.isToken:
 			if v, ok := vals[seg.name]; ok {

@@ -1,0 +1,39 @@
+{{define "title"}}{{.L.T "history.title"}}{{end}}
+{{define "content"}}{{$L := .L}}{{with .Data}}
+<h1>{{$L.T "history.title"}}</h1>
+
+{{if .Error}}<div class="alert alert-error" role="alert">{{.Error}}</div>{{end}}
+
+{{if .Batches}}
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr>
+      <th>{{$L.T "history.col.date"}}</th>
+      <th>{{$L.T "history.col.subject"}}</th>
+      <th>{{$L.T "history.col.list"}}</th>
+      <th>{{$L.T "history.col.counts"}}</th>
+      <th>{{$L.T "history.col.status"}}</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+  {{range .Batches}}
+    <tr>
+      <td>{{$L.Date .CreatedAt}}</td>
+      <td>{{.Subject}}</td>
+      <td>{{.ListName}}</td>
+      <td class="num">{{.Sent}} / {{.Failed}} / {{.Pending}}</td>
+      <td>{{batchStatus $L .}} {{if eq .Provider "test"}}<span class="badge badge-test">{{$L.T "history.test_badge"}}</span>{{end}}</td>
+      <td class="row-actions"><a href="/history/{{.ID}}">{{$L.T "history.view_message"}}</a></td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{if gt .Total .Limit}}<p class="note">{{$L.T "history.more" .Limit}}</p>{{end}}
+{{else}}
+<p>{{$L.T "history.empty"}}</p>
+<p class="actions"><a class="button" href="/children">{{$L.T "nav.children"}}</a></p>
+{{end}}
+{{end}}{{end}}
