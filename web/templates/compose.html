@@ -2,31 +2,109 @@
 {{define "content"}}{{$L := .L}}{{with .Data}}
 <h1>{{$L.T "compose.title"}}</h1>
 
-{{if .Dropped}}<div class="alert alert-warning" role="status">{{$L.T "compose.dropped" .Dropped}}</div>{{end}}
+{{range .Errors}}<div class="alert alert-error" role="alert">{{.}}</div>{{end}}
+{{if .Notice}}<div class="alert alert-success" role="status">{{.Notice}}</div>{{end}}
 
-<p>{{if .Families}}{{$L.T "compose.emails_count_families" (len .Recipients)}}{{else}}{{$L.T "compose.emails_count" (len .Recipients)}}{{end}}</p>
+<p class="actions actions-top"><a class="button button-secondary" href="/children">{{$L.T "compose.back"}}</a></p>
 
-<div class="table-wrap">
-<table>
-  <thead>
-    <tr>
-      <th>{{if .Families}}{{$L.T "compose.col.payer"}}{{else}}{{$L.T "compose.col.parent"}}{{end}}</th>
-      <th>{{$L.T "compose.col.email"}}</th>
-      <th>{{if .Families}}{{$L.T "compose.col.families"}}{{else}}{{$L.T "compose.col.children"}}{{end}}</th>
-    </tr>
-  </thead>
-  <tbody>
-  {{range .Recipients}}
-    <tr>
-      <td>{{.ParentName}}</td>
-      <td>{{.Email}}</td>
-      <td>{{range $i, $c := .Children}}{{if $i}}, {{end}}{{$c}}{{end}}</td>
-    </tr>
-  {{end}}
-  </tbody>
-</table>
-</div>
+<form method="post" action="/compose" class="compose">
+  <input type="hidden" name="version" value="{{.Version}}">
+  {{range .IDs}}<input type="hidden" name="child" value="{{.}}">{{end}}
+  <button type="submit" name="action" value="preview" class="visually-hidden" tabindex="-1" aria-hidden="true">{{$L.T "compose.preview_button"}}</button>
 
-<p class="note">{{$L.T "compose.next_step"}}</p>
+  <p>{{if .Families}}{{$L.T "compose.emails_count_families" (len .Recipients)}}{{else}}{{$L.T "compose.emails_count" (len .Recipients)}}{{end}}</p>
+  <details>
+    <summary>{{$L.T "compose.recipients_show"}}</summary>
+    <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          {{if not .Families}}<th>{{$L.T "compose.col.parent"}}</th>{{end}}
+          <th>{{$L.T "compose.col.email"}}</th>
+          <th>{{if .Families}}{{$L.T "compose.col.families"}}{{else}}{{$L.T "compose.col.children"}}{{end}}</th>
+        </tr>
+      </thead>
+      <tbody>
+      {{range .Recipients}}
+        <tr>
+          {{if not $.Data.Families}}<td>{{.ParentName}}</td>{{end}}
+          <td>{{.Email}}</td>
+          <td>{{.Children}}</td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+    </div>
+  </details>
+
+  <div class="field">
+    {{if .Templates}}
+    <label for="template">{{$L.T "compose.template_label"}}</label>
+    <div class="inline">
+      <select id="template" name="template">
+        <option value="" selected>{{$L.T "compose.template_choose"}}</option>
+        {{range .Templates}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
+      </select>
+      <button type="submit" name="action" value="load" class="button-secondary">{{$L.T "compose.template_load"}}</button>
+    </div>
+    <p class="note">{{$L.T "compose.template_load_note"}}</p>
+    {{else}}
+    <p class="note">{{$L.T "compose.no_templates"}}</p>
+    {{end}}
+    <p class="note"><a href="/templates">{{$L.T "compose.manage_templates"}}</a></p>
+  </div>
+
+  <div class="field">
+    <label for="subject">{{$L.T "compose.subject"}}</label>
+    <input type="text" id="subject" name="subject" maxlength="{{.MaxSubject}}" value="{{.Subject}}" autocomplete="off">
+  </div>
+  <div class="field">
+    <label for="body">{{$L.T "compose.body"}}</label>
+    <textarea id="body" name="body" rows="14" maxlength="{{.MaxBody}}">
+{{.Body}}</textarea>
+  </div>
+
+  <div class="field">
+    <h2>{{$L.T "compose.placeholders_title"}}</h2>
+    <p class="note">{{$L.T "compose.placeholders_help"}}</p>
+    <ul class="placeholders">
+    {{range .Placeholders}}<li><code>{{"{{"}}{{.Name}}{{"}}"}}</code> {{.Desc}}</li>{{end}}
+    </ul>
+  </div>
+
+  <div class="field">
+    <h2>{{$L.T "compose.preview_title"}}</h2>
+    <label for="preview_to">{{$L.T "compose.preview_for"}}</label>
+    <div class="inline">
+      <select id="preview_to" name="preview_to">
+        {{range .Recipients}}<option value="{{.ParentID}}"{{if eq .ParentID $.Data.PreviewTo}} selected{{end}}>{{.Email}} · {{if $.Data.Families}}{{.Children}}{{else}}{{.ParentName}}{{end}}</option>{{end}}
+      </select>
+      <button type="submit" name="action" value="preview" class="button-secondary">{{$L.T "compose.preview_button"}}</button>
+    </div>
+    {{if .Problems}}
+    <div class="alert alert-error problems" role="alert">
+      <strong>{{$L.T "problem.title"}}</strong>
+      <ul>{{range .Problems}}<li>{{.}}</li>{{end}}</ul>
+    </div>
+    {{end}}
+    {{with .Preview}}
+    <div class="preview">
+      <p><strong>{{$L.T "compose.preview_to"}}</strong> {{.ToName}} &lt;{{.To}}&gt;</p>
+      <p><strong>{{$L.T "compose.subject"}}</strong> {{.Subject}}</p>
+      <div class="preview-body">{{.Body}}</div>
+    </div>
+    {{end}}
+  </div>
+
+  <div class="field">
+    <h2>{{$L.T "compose.save_title"}}</h2>
+    <div class="inline">
+      <input type="text" name="template_name" maxlength="{{.MaxName}}" value="{{.TemplateName}}" aria-label="{{$L.T "templates.name"}}" autocomplete="off">
+      <button type="submit" name="action" value="save_template" class="button-secondary">{{$L.T "compose.save_button"}}</button>
+    </div>
+  </div>
+
+  <p class="note">{{$L.T "compose.next_step"}}</p>
+</form>
 <p class="actions"><a class="button button-secondary" href="/children">{{$L.T "compose.back"}}</a></p>
 {{end}}{{end}}

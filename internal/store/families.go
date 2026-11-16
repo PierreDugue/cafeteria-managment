@@ -90,8 +90,8 @@ func (s *Store) ImportFamilies(ctx context.Context, req ImportRequest) (ImportSu
 
 	// Data only changes through imports, so the last import ID identifies
 	// the state the changes are computed from.
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0) FROM imports`).Scan(&sum.Base); err != nil {
-		return sum, fmt.Errorf("read last import: %w", err)
+	if sum.Base, err = lastImportID(ctx, tx); err != nil {
+		return sum, err
 	}
 	if req.Base != nil && *req.Base != sum.Base {
 		return sum, ErrStaleImport

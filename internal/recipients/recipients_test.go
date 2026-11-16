@@ -100,3 +100,52 @@ func TestGroupTwoFamiliesSharingOneEmail(t *testing.T) {
 		t.Fatalf("got %+v", got)
 	}
 }
+
+func TestGroupChildIDsAndFamilyNumbersParallelToChildren(t *testing.T) {
+	t.Run("children data", func(t *testing.T) {
+		got := Group([]store.Child{
+			{ID: 5, Name: "Zoé", ParentID: 1, ParentName: "Anne", Email: "a@x.fr"},
+			{ID: 3, Name: "Alice", ParentID: 1, ParentName: "Anne", Email: "a@x.fr"},
+			{ID: 4, Name: "Léa", ParentID: 2, ParentName: "Bob", Email: "b@x.fr"},
+		})
+		if len(got) != 2 {
+			t.Fatalf("got %+v", got)
+		}
+		if !slices.Equal(got[0].ChildIDs, []int64{5, 3}) || !slices.Equal(got[0].Children, []string{"Zoé", "Alice"}) {
+			t.Errorf("Anne = %+v", got[0])
+		}
+		if !slices.Equal(got[0].FamilyNumbers, []string{"", ""}) || !slices.Equal(got[1].FamilyNumbers, []string{""}) {
+			t.Errorf("family numbers = %q %q", got[0].FamilyNumbers, got[1].FamilyNumbers)
+		}
+		if !slices.Equal(got[1].ChildIDs, []int64{4}) {
+			t.Errorf("Bob = %+v", got[1])
+		}
+	})
+
+	t.Run("family data keeps input order and skips entries without email", func(t *testing.T) {
+		got := Group([]store.Child{
+			{ID: 2, Name: "MARTIN", FamilyNumber: "20", ParentID: 7, ParentName: "DUPONT", Email: "s@x.fr"},
+			{ID: 9, Name: "NOMAIL", FamilyNumber: "99"},
+			{ID: 1, Name: "DUPONT", FamilyNumber: "10", ParentID: 7, ParentName: "DUPONT", Email: "s@x.fr"},
+		})
+		if len(got) != 1 {
+			t.Fatalf("got %+v", got)
+		}
+		r := got[0]
+		if !slices.Equal(r.ChildIDs, []int64{2, 1}) || !slices.Equal(r.FamilyNumbers, []string{"20", "10"}) || !slices.Equal(r.Children, []string{"MARTIN", "DUPONT"}) {
+			t.Errorf("recipient = %+v", r)
+		}
+	})
+
+	t.Run("lengths always match", func(t *testing.T) {
+		for _, r := range Group([]store.Child{
+			{ID: 1, Name: "a", ParentID: 1, ParentName: "P", Email: "p@x.fr"},
+			{ID: 2, Name: "b", FamilyNumber: "1", ParentID: 2, ParentName: "Q", Email: "q@x.fr"},
+			{ID: 3, Name: "c", FamilyNumber: "2", ParentID: 2, ParentName: "Q", Email: "q@x.fr"},
+		}) {
+			if len(r.ChildIDs) != len(r.Children) || len(r.FamilyNumbers) != len(r.Children) {
+				t.Errorf("not parallel: %+v", r)
+			}
+		}
+	})
+}

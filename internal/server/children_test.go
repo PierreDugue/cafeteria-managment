@@ -55,6 +55,27 @@ func form(ids ...any) string {
 	return v.Encode()
 }
 
+// currentVersion returns the data version the /children form would carry.
+func currentVersion(t *testing.T, st *store.Store) int64 {
+	t.Helper()
+	v, err := st.DataVersion(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
+// formAt is form plus the hidden version field.
+func formAt(version int64, ids ...any) string {
+	return form(ids...) + "&version=" + fmt.Sprint(version)
+}
+
+// formV is form with the current data version.
+func formV(t *testing.T, st *store.Store, ids ...any) string {
+	t.Helper()
+	return formAt(currentVersion(t, st), ids...)
+}
+
 // manyIDs builds a form body with n distinct positive IDs.
 func manyIDs(n int) string {
 	v := url.Values{}
@@ -63,6 +84,10 @@ func manyIDs(n int) string {
 	}
 	return v.Encode()
 }
+
+// fakeID returns an ID that does not exist in a database seeded with a few
+// rows.
+const fakeID = 424242
 
 func TestChildrenPage(t *testing.T) {
 	t.Run("rows with data attributes", func(t *testing.T) {
@@ -153,7 +178,7 @@ func TestCompose(t *testing.T) {
 		s, st := newTestServer(t)
 		seed(t, st, threeChildren)
 		ids := childIDs(t, st)
-		rec := postCompose(s, form(ids["Zoé"], ids["Léa"], ids["Émile"]))
+		rec := postCompose(s, formV(t, st, ids["Zoé"], ids["Léa"], ids["Émile"]))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d: %s", rec.Code, rec.Body)
 		}
@@ -164,11 +189,8 @@ func TestCompose(t *testing.T) {
 		if !strings.Contains(body, "Émile, Zoé") {
 			t.Errorf("Anne's children should be grouped in store order")
 		}
-		if strings.Count(body, "anne@example.com") != 1 || strings.Count(body, "bob@example.com") != 1 {
+		if strings.Count(body, "<td>anne@example.com</td>") != 1 || strings.Count(body, "<td>bob@example.com</td>") != 1 {
 			t.Errorf("each parent must appear once")
-		}
-		if strings.Contains(body, "existe(nt) plus") {
-			t.Error("unexpected dropped notice")
 		}
 	})
 
@@ -176,7 +198,7 @@ func TestCompose(t *testing.T) {
 		s, st := newTestServer(t)
 		seed(t, st, threeChildren)
 		ids := childIDs(t, st)
-		rec := postCompose(s, form("abc", "", "-3", 0, "1.5", "99999999999999999999", ids["Léa"], ids["Léa"], " "+fmt.Sprint(ids["Léa"])))
+		rec := postCompose(s, formV(t, st, "abc", "", "-3", 0, "1.5", "99999999999999999999", ids["Léa"], ids["Léa"], " "+fmt.Sprint(ids["Léa"])))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d", rec.Code)
 		}
@@ -184,43 +206,45 @@ func TestCompose(t *testing.T) {
 		if !strings.Contains(body, "1 email(s)") || strings.Contains(body, "anne@example.com") {
 			t.Errorf("want only Bob: %s", body)
 		}
-		if strings.Contains(body, "existe(nt) plus") {
-			t.Error("invalid ids must not count as dropped")
-		}
 	})
 
-	t.Run("deleted ids reported as dropped", func(t *testing.T) {
+	t.Run("import after the selection is stale", func(t *testing.T) {
 		s, st := newTestServer(t)
 		seed(t, st, threeChildren)
 		ids := childIDs(t, st)
+		stale := currentVersion(t, st)
 		// Second import removes Léa (and Bob) between list and compose.
 		seed(t, st, threeChildren[:2])
-		rec := postCompose(s, form(ids["Zoé"], ids["Léa"]))
-		if rec.Code != http.StatusOK {
-			t.Fatalf("status = %d", rec.Code)
+		rec := postCompose(s, formAt(stale, ids["Zoé"], ids["Léa"]))
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("status = %d, want 409", rec.Code)
 		}
 		body := rec.Body.String()
-		if !strings.Contains(body, "1 ligne(s) sélectionnée(s) n&#39;existe(nt) plus") {
-			t.Errorf("dropped notice missing: %s", body)
+		if !strings.Contains(body, "Les données ont changé depuis votre sélection") {
+			t.Errorf("stale message missing: %s", body)
 		}
-		if !strings.Contains(body, "1 email(s)") || strings.Contains(body, "bob@example.com") {
-			t.Errorf("want only Anne")
+		if strings.Contains(body, "seront envoyés") || strings.Contains(body, "bob@example.com") && strings.Contains(body, "email(s)") {
+			t.Error("recipients must not be listed")
+		}
+		if !strings.Contains(body, `name="child"`) {
+			t.Error("children list should be shown again")
 		}
 	})
 
-	t.Run("dropped notice in english", func(t *testing.T) {
+	t.Run("stale selection in english", func(t *testing.T) {
 		s, st := newTestServer(t)
 		seed(t, st, threeChildren)
 		ids := childIDs(t, st)
+		stale := currentVersion(t, st)
 		seed(t, st, threeChildren[:2])
-		req := httptest.NewRequest(http.MethodPost, "/compose", strings.NewReader(form(ids["Zoé"], ids["Léa"])))
+		req := httptest.NewRequest(http.MethodPost, "/compose", strings.NewReader(formAt(stale, ids["Zoé"], ids["Léa"])))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Host = "127.0.0.1:8080"
 		req.Header.Set("Accept-Language", "en")
 		rec := httptest.NewRecorder()
 		s.ServeHTTP(rec, req)
-		if !strings.Contains(rec.Body.String(), "1 selected row(s) no longer exist") {
-			t.Errorf("body: %s", rec.Body)
+		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "The data changed since your selection") {
+			t.Errorf("status %d body: %s", rec.Code, rec.Body)
 		}
 	})
 
@@ -228,9 +252,11 @@ func TestCompose(t *testing.T) {
 		s, st := newTestServer(t)
 		seed(t, st, threeChildren)
 		for name, body := range map[string]string{
-			"no field":   "",
-			"invalid":    form("abc", -1, 0),
-			"unknown id": form(424242),
+			"no field":                "",
+			"version only":            "version=1",
+			"invalid":                 formV(t, st, "abc", -1, 0),
+			"unknown id":              formV(t, st, fakeID),
+			"invalid without version": form("abc", -1, 0),
 		} {
 			t.Run(name, func(t *testing.T) {
 				rec := postCompose(s, body)
@@ -265,7 +291,7 @@ func TestCompose(t *testing.T) {
 		s, st := newTestServer(t)
 		seed(t, st, threeChildren)
 		ids := childIDs(t, st)
-		req := httptest.NewRequest(http.MethodPost, "/compose", strings.NewReader(form(ids["Léa"])))
+		req := httptest.NewRequest(http.MethodPost, "/compose", strings.NewReader(formV(t, st, ids["Léa"])))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("Sec-Fetch-Site", "cross-site")
 		if rec := do(s, req); rec.Code != http.StatusForbidden {
@@ -277,7 +303,7 @@ func TestCompose(t *testing.T) {
 		s, st := newTestServer(t)
 		seed(t, st, threeChildren)
 		ids := childIDs(t, st)
-		body := form(ids["Léa"]) + "&junk=" + strings.Repeat("a", 1<<20+10)
+		body := formV(t, st, ids["Léa"]) + "&junk=" + strings.Repeat("a", 1<<20+10)
 		rec := postCompose(s, body)
 		if rec.Code != http.StatusUnprocessableEntity {
 			t.Fatalf("status = %d, want 422", rec.Code)
@@ -332,23 +358,25 @@ func TestCompose(t *testing.T) {
 	})
 
 	t.Run("exactly max ids accepted", func(t *testing.T) {
-		s, _ := newTestServer(t)
-		rec := postCompose(s, manyIDs(maxSelectedChildren))
-		if rec.Code == http.StatusInternalServerError {
-			t.Fatalf("status = 500")
-		}
-		if strings.Contains(rec.Body.String(), "Trop d") {
-			t.Error("too_many shown for exactly the maximum")
+		s, st := newTestServer(t)
+		seed(t, st, threeChildren)
+		// IDs 1..5000 include the three real rows: the request passes the
+		// limit and the version check.
+		rec := postCompose(s, manyIDs(maxSelectedChildren)+"&version="+fmt.Sprint(currentVersion(t, st)))
+		if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "Trop d") {
+			t.Fatalf("status = %d, want 200 without too_many", rec.Code)
 		}
 	})
 
 	t.Run("duplicates and invalid ids do not count", func(t *testing.T) {
-		s, _ := newTestServer(t)
+		s, st := newTestServer(t)
+		seed(t, st, threeChildren)
 		v := url.Values{}
 		for i := 0; i < 4000; i++ {
 			v.Add("child", "1")
 			v.Add("child", "abc")
 		}
+		v.Set("version", fmt.Sprint(currentVersion(t, st)))
 		rec := postCompose(s, v.Encode())
 		if rec.Code == http.StatusInternalServerError || strings.Contains(rec.Body.String(), "Trop d") {
 			t.Fatalf("status = %d, duplicates/invalid must not trigger too_many", rec.Code)
@@ -359,7 +387,7 @@ func TestCompose(t *testing.T) {
 		s, st := newTestServer(t)
 		seed(t, st, []store.ImportRow{{ParentName: `<i>P</i>`, ChildName: `<script>alert(1)</script>`, Email: "x@example.com"}})
 		ids := childIDs(t, st)
-		body := postCompose(s, form(ids[`<script>alert(1)</script>`])).Body.String()
+		body := postCompose(s, formV(t, st, ids[`<script>alert(1)</script>`])).Body.String()
 		if strings.Contains(body, "<script>alert") || strings.Contains(body, "<i>P</i>") {
 			t.Errorf("unescaped HTML: %s", body)
 		}
@@ -392,7 +420,7 @@ func TestComposeRefusesEntryWithoutEmail(t *testing.T) {
 		"only empty":        {ids["EMPTY"]},
 	} {
 		t.Run(name, func(t *testing.T) {
-			rec := postCompose(s, form(selected...))
+			rec := postCompose(s, formV(t, st, selected...))
 			if rec.Code != http.StatusUnprocessableEntity {
 				t.Fatalf("status = %d", rec.Code)
 			}
@@ -407,7 +435,7 @@ func TestComposeRefusesEntryWithoutEmail(t *testing.T) {
 	}
 
 	t.Run("english", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/compose", strings.NewReader(form(ids["NOMAIL"])))
+		req := httptest.NewRequest(http.MethodPost, "/compose", strings.NewReader(formV(t, st, ids["NOMAIL"])))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Host = "127.0.0.1:8080"
 		req.Header.Set("Accept-Language", "en")
@@ -424,7 +452,7 @@ func TestComposeRefusesEntryWithoutEmail(t *testing.T) {
 		slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
 		t.Cleanup(func() { slog.SetDefault(old) })
 
-		postCompose(s, form(ids["NOMAIL"]))
+		postCompose(s, formV(t, st, ids["NOMAIL"]))
 		out := buf.String()
 		if !strings.Contains(out, "compose: entry without a valid email selected") || !strings.Contains(out, fmt.Sprintf("id=%d", ids["NOMAIL"])) {
 			t.Errorf("log = %q", out)
@@ -446,32 +474,35 @@ func TestComposeFamilies(t *testing.T) {
 	})
 	ids := childIDs(t, st)
 
-	rec := postCompose(s, form(ids["DUPONT"], ids["MARTIN"]))
+	rec := postCompose(s, formV(t, st, ids["DUPONT"], ids["MARTIN"]))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"1 email(s) seront envoyés, un par adresse.", "Payeur", "Familles concernées", "DUPONT, MARTIN"} {
+	for _, want := range []string{"1 email(s) seront envoyés, un par adresse.", "Familles concernées", "10 DUPONT, 20 MARTIN"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body does not contain %q: %s", want, body)
 		}
 	}
-	if strings.Count(body, "shared@example.com") != 1 {
-		t.Errorf("shared address must appear once")
+	if strings.Contains(body, "Payeur") {
+		t.Error("payer column must be gone")
+	}
+	if strings.Count(body, "shared@example.com") != 2 { // table + preview picker
+		t.Errorf("shared address must be one recipient: %s", body)
 	}
 	if strings.Contains(body, "z@example.com") {
 		t.Error("unselected family listed")
 	}
 
 	t.Run("english", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/compose", strings.NewReader(form(ids["ZED"])))
+		req := httptest.NewRequest(http.MethodPost, "/compose", strings.NewReader(formV(t, st, ids["ZED"])))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Host = "127.0.0.1:8080"
 		req.Header.Set("Accept-Language", "en")
 		rec := httptest.NewRecorder()
 		s.ServeHTTP(rec, req)
 		b := rec.Body.String()
-		if !strings.Contains(b, "1 email(s) will be sent, one per address.") || !strings.Contains(b, "Families concerned") || !strings.Contains(b, "Payer") {
+		if !strings.Contains(b, "1 email(s) will be sent, one per address.") || !strings.Contains(b, "Families concerned") || strings.Contains(b, "Payer") {
 			t.Errorf("body: %s", b)
 		}
 	})

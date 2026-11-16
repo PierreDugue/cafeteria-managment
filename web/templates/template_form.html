@@ -1,0 +1,41 @@
+{{define "title"}}{{with .Data}}{{if .ID}}{{$.L.T "templates.edit_title"}}{{else}}{{$.L.T "templates.new"}}{{end}}{{end}}{{end}}
+{{define "content"}}{{$L := .L}}{{with .Data}}
+<h1>{{if .ID}}{{$L.T "templates.edit_title"}}{{else}}{{$L.T "templates.new"}}{{end}}</h1>
+
+{{range .Errors}}<div class="alert alert-error" role="alert">{{.}}</div>{{end}}
+{{if .Problems}}
+<div class="alert alert-error problems" role="alert">
+  <strong>{{$L.T "problem.title"}}</strong>
+  <ul>{{range .Problems}}<li>{{.}}</li>{{end}}</ul>
+</div>
+{{end}}
+
+<form method="post" action="{{if .ID}}/templates/{{.ID}}{{else}}/templates{{end}}" class="compose">
+  <div class="field">
+    <label for="name">{{$L.T "templates.name"}}</label>
+    <input type="text" id="name" name="name" maxlength="{{.MaxName}}" value="{{.Name}}" autocomplete="off">
+  </div>
+  <div class="field">
+    <label for="subject">{{$L.T "compose.subject"}}</label>
+    <input type="text" id="subject" name="subject" maxlength="{{.MaxSubject}}" value="{{.Subject}}" autocomplete="off">
+  </div>
+  <div class="field">
+    <label for="body">{{$L.T "compose.body"}}</label>
+    <textarea id="body" name="body" rows="14" maxlength="{{.MaxBody}}">
+{{.Body}}</textarea>
+  </div>
+
+  <div class="field">
+    <h2>{{$L.T "compose.placeholders_title"}}</h2>
+    <p class="note">{{$L.T "compose.placeholders_help"}}</p>
+    <ul class="placeholders">
+    {{range .Placeholders}}<li><code>{{"{{"}}{{.Name}}{{"}}"}}</code> {{.Desc}}{{if .Note}} <span class="muted">({{.Note}})</span>{{end}}</li>{{end}}
+    </ul>
+  </div>
+
+  <div class="actions">
+    <button type="submit">{{$L.T "templates.save"}}</button>
+    <a class="button button-secondary" href="/templates">{{$L.T "templates.cancel"}}</a>
+  </div>
+</form>
+{{end}}{{end}}

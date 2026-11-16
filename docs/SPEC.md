@@ -1,6 +1,6 @@
 # Cafeteria Management — Specification
 
-Status: draft · Last updated: 2026-11-10
+Status: draft · Last updated: 2026-11-16
 
 ## 1. Goal
 
@@ -138,7 +138,8 @@ Phone numbers, RL names/emails and other columns are not stored.
    selection page (§4.2) shows one row per (family number, payer email):
    family number, billing name, payer email. A family with two different
    payer emails appears on **two rows**, side by side, ticked separately.
-2. **Name**: `NOMFACT` is the name shown and used for `{{parent_name}}`.
+2. **Name**: `NOMFACT` is the name shown and used for `{{parent_name}}`
+   (for an address shared by several families: see decision 6).
 3. **Missing `EMAIL PAYEUR`** (should not happen): the family is still
    imported, with a **warning on its line** in the preview. In the list it is
    shown with a warning ("email du payeur manquant") and **cannot be selected**:
@@ -148,7 +149,12 @@ Phone numbers, RL names/emails and other columns are not stored.
    email (shown with a warning, cannot be selected).
 5. **Encoding** (UTF-8 or Windows-1252) is detected automatically.
 6. **Two families with the same payer email**, both selected: **one** email to
-   that address, mentioning both families (§4.4 rule).
+   that address, mentioning both families (§4.4 rule). Its
+   `{{parent_name}}` is built from the billing names of the **selected**
+   families for that address, without duplicates: "SILVA Ana et SILVA Rui"
+   when both are selected, "SILVA Rui" when only that family is (not the
+   first `NOMFACT` stored for the address). Confirmed by the user,
+   2026-11-16 (plan 003).
 
 **Assumed** (recommended by the architect, not yet confirmed):
 
@@ -167,6 +173,11 @@ child + parent pair; search, selection and counter run in the page; at most
 - Search by child or parent name; filter (e.g. by class, if present in the file).
 - Select children with checkboxes; "select all / none" for the current filter.
 - Show a counter: N children selected → M emails will be sent.
+- **The last selection is remembered**: when the user continues to the
+  message page with a valid selection, the selected entries are saved; the
+  next time the list opens they are pre-checked (never an entry without a
+  valid email). The saved selection of an entry removed by an import
+  disappears with it. Nothing is saved when the page is only opened.
 
 **Family data** (CSV export, §4.1.1; plan `docs/plans/002-csv-import.md`):
 the list shows one row per family entry: family number, billing name, payer
@@ -178,15 +189,62 @@ a notice gives their number. The server refuses a selection that contains
 one. An invalid payer email in a family that also has a valid one gives
 that family an extra, unselectable row.
 
+**Stale selection** (plan 003, confirmed 2026-11-16): the selection is tied
+to the data version (the last import ID), sent with the form. If any import
+was saved between the selection and the composition (or the preview, or
+later the sending), the request is refused and the user selects again
+("les données ont changé depuis votre sélection"). This replaces the former
+"N selected rows no longer exist" notice: after a re-import a stale ID
+could point to another child.
+
 ### 4.3 Email composition
 
+Status: plan `docs/plans/003-email-composition.md` approved (2026-11-16),
+not implemented yet.
+
 - Subject and body written by the user, plain text first (HTML/rich text later).
-- Placeholders replaced per recipient:
-  - `{{parent_name}}`
-  - `{{child_name}}` — for several children: "Léa et Tom" / "Léa and Tom"
-  - `{{children}}` — list of the selected children for that parent
-- **Templates**: save a message as a named template, reuse and edit it later.
-- **Preview** the final email for any one recipient before sending.
+- **Placeholders** replaced per recipient. The names are English, written
+  `{{name}}` (spaces inside the braces and case ignored); the page lists the
+  placeholders of the current data with a description in the interface
+  language. No French aliases.
+
+  | Placeholder | Children data (Excel) | Family data (CSV, §4.1.1) |
+  |---|---|---|
+  | `{{parent_name}}` | parent name | billing names of the selected families for that address, joined ("SILVA Ana et SILVA Rui") |
+  | `{{family_number}}` | not available | family numbers of the selected families for that address, joined ("1234 et 1250") |
+
+  - Joining: "A", "A et B", "A, B et C"; the word ("et" / "and") follows
+    the interface language (§6). Duplicate billing names or family numbers
+    of one address appear once.
+  - A placeholder "not available" for the imported data is an error, never
+    replaced by an empty or substitute value.
+  - Child placeholders (`{{child_name}}`, `{{children}}`) are removed for
+    now because the CSV export has no child names; they are reported as
+    unknown placeholders.
+- **Rendering rules**: the text is read once, left to right; values are
+  inserted as plain text and never read again as placeholders. Line endings
+  are normalized to `\n`; the subject is trimmed; trailing whitespace at
+  the end of the body is removed.
+- **Errors block the preview and the sending** and are listed with the
+  field concerned: unknown placeholder, placeholder not available for this
+  data, badly written placeholder (`{{` or
+  `}}` without its pair, line break or braces inside, more than 40
+  characters), empty subject or body, too long, forbidden character
+  (control characters; in the subject also line breaks and tabs). An email
+  is never sent with a raw `{{…}}` left in it.
+- **Limits**: subject 255 characters, body 20,000 characters, template name
+  80 characters. All three are required for a template.
+- **Templates**: save a message as a named template (from the compose page
+  or the templates pages), reuse and edit it later, delete it with a
+  confirmation. Names are unique ignoring case, accents and extra spaces.
+  A template is checked like a message when saved (unknown or badly written
+  placeholders refused; "not available" is not checked, since a template is
+  not tied to one kind of data). Loading a template replaces the current
+  subject and body. Imports never touch templates.
+- **Preview** the final email (to, subject, body) for any one recipient
+  before sending.
+- The selection and the text travel in the page's form (no draft is saved);
+  the selection must still be current (§4.2 "stale selection").
 
 ### 4.4 Sending
 
@@ -271,7 +329,9 @@ Tests use a fake sender; no real email is ever sent from tests.
 - Language selected in settings, defaulting to the system/browser language,
   falling back to French.
 - Email content is written by the user, so it is not translated. The joining
-  word for `{{child_name}}` ("et" / "and") follows the interface language.
+  word of placeholders that list several values (in family data `{{parent_name}}`
+  and `{{family_number}}`: "et" / "and")
+  follows the interface language.
 
 ## 7. Data model (SQLite)
 
@@ -287,7 +347,11 @@ children       id, parent_id (nullable), family_number, name, name_key,
                -- deleted with their parent
 imports        id, file_name, imported_at, rows_read,
                parents_added/updated/deleted, children_added/updated/deleted
-templates      id, name, subject, body, created_at, updated_at
+last_selection child_id (PK, references children, ON DELETE CASCADE)
+               -- entries selected at the last "Continuer"; replaced as a whole;
+               -- the cascade drops entries deleted by an import
+templates      id, name, name_key (unique), subject, body, created_at, updated_at
+               -- name_key = name without case/accents/extra spaces; body plain text
 batches        id, subject, body, created_at, status
 messages       id, batch_id, parent_id (nullable), parent_name, to_email,
                subject, body, status, error, sent_at
@@ -331,6 +395,8 @@ cmd/cafeteria/        entry point (flags, startup, open browser)
 internal/server/      HTTP routes and handlers
 internal/store/       database access and migrations
 internal/importer/    Excel parsing and validation
+internal/recipients/  one recipient per parent for the selected children
+internal/message/     placeholders, checks and rendering of one email
 internal/mailer/      email providers and sending queue
 internal/i18n/        translations
 web/templates/        HTML templates
@@ -369,8 +435,9 @@ The app starts as a browser tab. It may later run in its own window with
 3. **Import** — Excel upload, preview, save. ✅ (minimal FR/EN i18n added
    with it, since no UI text may be hard-coded)
 4. **Selection** — child list, search, selection. ✅
-5. **Compose & send** — templates, placeholders, preview, sending queue
-   (fake sender), history.
+5. **Compose & send**
+   - 5a. **Compose** — templates, placeholders, preview (plan 003). ✅
+   - 5b. **Send** — confirmation, sending queue (fake sender), history.
 6. **Microsoft 365** — Microsoft sign-in and Graph sending.
 6b. **SMTP** — Gmail / custom SMTP sender.
 7. **i18n** — FR/EN translation files and language switch.

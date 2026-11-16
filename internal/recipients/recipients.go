@@ -15,6 +15,10 @@ type Recipient struct {
 	ParentName string
 	Email      string
 	Children   []string
+	// ChildIDs and FamilyNumbers are parallel to Children (same order and
+	// length). FamilyNumbers entries are "" for children data.
+	ChildIDs      []int64
+	FamilyNumbers []string
 }
 
 // Group returns one Recipient per parent, ordered by normalized parent name
@@ -34,6 +38,8 @@ func Group(children []store.Child) []Recipient {
 			out = append(out, Recipient{ParentID: c.ParentID, ParentName: c.ParentName, Email: c.Email})
 		}
 		out[i].Children = append(out[i].Children, c.Name)
+		out[i].ChildIDs = append(out[i].ChildIDs, c.ID)
+		out[i].FamilyNumbers = append(out[i].FamilyNumbers, c.FamilyNumber)
 	}
 
 	keys := make(map[int64]string, len(out))

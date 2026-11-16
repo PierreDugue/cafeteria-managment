@@ -16,6 +16,10 @@
 <p class="counter" id="counter" role="status" aria-live="polite" data-template="{{if .Families}}{{$L.T "children.counter_families"}}{{else}}{{$L.T "children.counter"}}{{end}}" hidden></p>
 
 <form method="post" action="/compose" class="selection">
+  <input type="hidden" name="version" value="{{.Version}}">
+  <div class="actions actions-top">
+    <button type="submit">{{$L.T "children.continue"}}</button>
+  </div>
   <div class="table-wrap">
   <table id="children-table">
     <thead>
@@ -36,7 +40,7 @@
     {{range .Rows}}
       {{if .CanEmail}}
       <tr data-search="{{.Search}}" data-email="{{.Email}}">
-        <td><input type="checkbox" name="child" value="{{.ID}}" aria-label="{{.Name}}"></td>
+        <td><input type="checkbox" name="child" value="{{.ID}}"{{if .Checked}} checked{{end}} aria-label="{{.Name}}"></td>
         {{if $.Data.Families}}<td>{{.FamilyNumber}}</td><td>{{.Name}}</td><td>{{.Email}}</td>
         {{else}}<td>{{.Name}}</td><td>{{.ParentName}}</td><td>{{.Email}}</td>{{end}}
       </tr>

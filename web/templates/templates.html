@@ -1,0 +1,39 @@
+{{define "title"}}{{.L.T "templates.title"}}{{end}}
+{{define "content"}}{{$L := .L}}{{with .Data}}
+<h1>{{$L.T "templates.title"}}</h1>
+
+{{if .Error}}<div class="alert alert-error" role="alert">{{.Error}}</div>{{end}}
+{{if .Notice}}<div class="alert alert-success" role="status">{{.Notice}}</div>{{end}}
+
+<p class="actions actions-top"><a class="button" href="/templates/new">{{$L.T "templates.new"}}</a></p>
+
+{{if .Templates}}
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr>
+      <th>{{$L.T "templates.col.name"}}</th>
+      <th>{{$L.T "compose.subject"}}</th>
+      <th>{{$L.T "templates.col.updated"}}</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+  {{range .Templates}}
+    <tr>
+      <td>{{.Name}}</td>
+      <td>{{.Subject}}</td>
+      <td>{{$L.Date .UpdatedAt}}</td>
+      <td class="row-actions">
+        <a href="/templates/{{.ID}}">{{$L.T "templates.edit"}}</a>
+        <a href="/templates/{{.ID}}/delete">{{$L.T "templates.delete"}}</a>
+      </td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}
+<p>{{$L.T "templates.empty"}}</p>
+{{end}}
+{{end}}{{end}}
