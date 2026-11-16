@@ -192,7 +192,7 @@ func TestSavedSelectionUnchangedWhenRefused(t *testing.T) {
 
 	t.Run("stale version", func(t *testing.T) {
 		s, st, ids := setup(t)
-		stale := formAt(currentVersion(t, st)+1, ids["Léa"])
+		stale := formAt(mainList(t, st), currentVersion(t, st)+1, ids["Léa"])
 		if rec := postCompose(s, stale); rec.Code != http.StatusConflict {
 			t.Fatalf("status = %d", rec.Code)
 		}
@@ -202,9 +202,9 @@ func TestSavedSelectionUnchangedWhenRefused(t *testing.T) {
 	t.Run("missing and invalid version", func(t *testing.T) {
 		s, _, ids := setup(t)
 		for name, body := range map[string]string{
-			"missing":  form(ids["Léa"]),
-			"text":     form(ids["Léa"]) + "&version=abc",
-			"negative": form(ids["Léa"]) + "&version=-1",
+			"missing":  form(ids["Léa"]) + "&list=1",
+			"text":     form(ids["Léa"]) + "&list=1&version=abc",
+			"negative": form(ids["Léa"]) + "&list=1&version=-1",
 		} {
 			if rec := postCompose(s, body); rec.Code != http.StatusConflict {
 				t.Fatalf("%s: status = %d", name, rec.Code)
@@ -236,7 +236,7 @@ func TestSavedSelectionUnchangedWhenRefused(t *testing.T) {
 
 	t.Run("too many", func(t *testing.T) {
 		s, st, ids := setup(t)
-		body := manyIDs(maxSelectedChildren+1) + "&version=" + fmt.Sprint(currentVersion(t, st))
+		body := manyIDs(maxSelectedChildren+1) + "&" + currentQS(t, st)
 		if rec := postCompose(s, body); rec.Code != http.StatusUnprocessableEntity {
 			t.Fatalf("status = %d", rec.Code)
 		}

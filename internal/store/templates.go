@@ -12,8 +12,10 @@ import (
 
 // Errors returned by the template methods.
 var (
-	ErrNotFound  = errors.New("not found")
-	ErrNameTaken = errors.New("template name already used")
+	ErrNotFound = errors.New("not found")
+	// ErrNameTaken is shared by templates and lists: the name (compared by
+	// textnorm.Key) is already used by another one.
+	ErrNameTaken = errors.New("name already used")
 )
 
 // Template is a saved message (SPEC §4.3).
@@ -84,7 +86,7 @@ func (s *Store) CreateTemplate(ctx context.Context, name, subject, body string) 
 	}
 	defer tx.Rollback()
 
-	if err := checkNameFree(ctx, tx, key, 0); err != nil {
+	if err := checkNameFree(ctx, tx, templateNameQuery, key, 0); err != nil {
 		return 0, err
 	}
 	now := s.timestamp()
@@ -112,7 +114,7 @@ func (s *Store) UpdateTemplate(ctx context.Context, id int64, name, subject, bod
 	}
 	defer tx.Rollback()
 
-	if err := checkNameFree(ctx, tx, key, id); err != nil {
+	if err := checkNameFree(ctx, tx, templateNameQuery, key, id); err != nil {
 		return err
 	}
 	res, err := tx.ExecContext(ctx,
@@ -143,16 +145,22 @@ func (s *Store) DeleteTemplate(ctx context.Context, id int64) error {
 	return nil
 }
 
-// checkNameFree returns ErrNameTaken if a template other than exceptID has
-// the name key. The UNIQUE index stays as a safety net.
-func checkNameFree(ctx context.Context, tx *sql.Tx, key string, exceptID int64) error {
+const (
+	templateNameQuery = `SELECT id FROM templates WHERE name_key = ? AND id <> ?`
+	listNameQuery     = `SELECT id FROM lists WHERE name_key = ? AND id <> ?`
+)
+
+// checkNameFree runs query (templateNameQuery or listNameQuery) and returns
+// ErrNameTaken if another row than exceptID has the name key. The UNIQUE
+// index stays as a safety net.
+func checkNameFree(ctx context.Context, tx *sql.Tx, query, key string, exceptID int64) error {
 	var other int64
-	err := tx.QueryRowContext(ctx, `SELECT id FROM templates WHERE name_key = ? AND id <> ?`, key, exceptID).Scan(&other)
+	err := tx.QueryRowContext(ctx, query, key, exceptID).Scan(&other)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("check template name: %w", err)
+		return fmt.Errorf("check name: %w", err)
 	}
 	return ErrNameTaken
 }

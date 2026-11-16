@@ -3,12 +3,31 @@
 <h1>{{$L.T "import.title"}}</h1>
 
 {{if .Error}}<div class="alert alert-error" role="alert">{{.Error}}</div>{{end}}
-{{if .Done}}<div class="alert alert-success" role="status">{{$L.T "import.done" .Done.FileName}}</div>{{end}}
+{{if .Done}}<div class="alert alert-success" role="status">{{$L.T "import.done" .Done.FileName .Done.ListName}}{{if not .Done.ListDeleted}} <a href="/children?list={{.Done.ListID}}">{{$L.T "import.see_list"}}</a>{{end}}</div>{{end}}
 
 <section class="card">
   <p>{{$L.T "import.help"}}</p>
   <p class="note">{{$L.T "import.replace_note"}}</p>
   <form method="post" action="/import/preview" enctype="multipart/form-data">
+    {{if .Lists}}
+    {{$t := .Target}}
+    <div class="field">
+      <label for="list">{{$L.T "import.target_label"}}</label>
+      <select id="list" name="list" required>
+        <option value=""{{if eq $t ""}} selected{{end}}>{{$L.T "import.target_choose"}}</option>
+        <option value="new"{{if eq $t "new"}} selected{{end}}>{{$L.T "import.target_new"}}</option>
+        {{range .Lists}}<option value="{{.ID}}"{{if eq (printf "%d" .ID) $t}} selected{{end}}>{{.Name}}</option>{{end}}
+      </select>
+    </div>
+    {{else}}
+    <input type="hidden" name="list" value="new">
+    {{end}}
+    <div class="field">
+      <label for="list_name">{{$L.T "import.new_name_label"}}</label>
+      <input type="text" id="list_name" name="list_name" value="{{.NewName}}" maxlength="80" autocomplete="off">
+      {{if .Lists}}<p class="note">{{$L.T "import.new_name_note"}}</p>{{end}}
+    </div>
+
     <label for="file">{{$L.T "import.file_label"}}</label>
     <input id="file" name="file" type="file" accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" required>
     <button type="submit">{{$L.T "import.preview_button"}}</button>
@@ -23,6 +42,7 @@
     <tr>
       <th>{{$L.T "import.col.date"}}</th>
       <th>{{$L.T "import.col.file"}}</th>
+      <th>{{$L.T "import.col.list"}}</th>
       <th class="num">{{$L.T "import.col.rows"}}</th>
       <th>{{$L.T "import.col.entries"}} <small class="muted">({{$L.T "import.changes_legend"}})</small></th>
       <th>{{$L.T "import.col.addresses"}}</th>
@@ -33,6 +53,7 @@
     <tr>
       <td>{{$L.Date .ImportedAt}}</td>
       <td>{{.FileName}}</td>
+      <td>{{if .ListDeleted}}{{$L.T "import.list_deleted" .ListName}}{{else}}{{.ListName}}{{end}}</td>
       <td class="num">{{.RowsRead}}</td>
       <td>{{$L.T "import.changes_short" .Children.Added .Children.Updated .Children.Deleted}}</td>
       <td>{{$L.T "import.changes_short" .Parents.Added .Parents.Updated .Parents.Deleted}}</td>

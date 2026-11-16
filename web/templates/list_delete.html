@@ -1,0 +1,15 @@
+{{define "title"}}{{.L.T "lists.delete_title"}}{{end}}
+{{define "content"}}{{$L := .L}}{{with .Data}}
+<h1>{{$L.T "lists.delete_title"}}</h1>
+
+<div class="card card-warning">
+  <p>{{$L.T "lists.delete_confirm" .List.Name .List.Children .List.Parents}}</p>
+</div>
+
+<form method="post" action="/lists/{{.List.ID}}/delete">
+  <div class="actions">
+    <button type="submit" class="button-danger">{{$L.T "lists.delete_button"}}</button>
+    <a class="button button-secondary" href="/">{{$L.T "lists.cancel"}}</a>
+  </div>
+</form>
+{{end}}{{end}}

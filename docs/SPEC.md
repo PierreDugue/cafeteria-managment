@@ -28,6 +28,76 @@ sends one email to each concerned parent.
 
 ## 4. Features
 
+### 4.0 Family lists
+
+Status: ✅ implemented (plan `docs/plans/004-family-lists.md`). Changes the
+"one import replaces all the data" rule of §4.1 / §4.1.1.
+
+The user can keep **several family lists**, each with a **name** (e.g.
+"Cantine 2026-2027", "Garderie"). Every family entry (or child, with the
+Excel layout) belongs to exactly one list.
+
+- **Import into a list**: on the import page the user chooses either
+  - **"Nouvelle liste…"**, and types its name, or
+  - **an existing list**, which the import **replaces**.
+
+  Once at least one list exists, the target **must be chosen every time**:
+  there is no default choice (replacing the wrong list would delete its
+  entries). With no list yet, only the name of the new list is asked.
+- **Explicit confirmation to replace a list**: the preview of an import
+  that replaces an existing list has a required checkbox "Je confirme
+  remplacer la liste « X »." and a button "Remplacer la liste « X »" (red,
+  with the number of deletions, when entries will be deleted; the list of
+  deleted entries is shown as before). The **server checks** the checkbox
+  on confirmation: without it, nothing is saved and the same preview is
+  shown again with a message, still confirmable. Creating a new list needs
+  no extra confirmation beyond the preview.
+- The "file is the source of truth" rule (§4.1) now applies **within the
+  chosen list only**: entries of that list present in the file are updated,
+  new ones are added, the ones missing from the file are deleted. **Other
+  lists are never touched by an import.**
+- The preview (§4.1) says which list is concerned ("Nouvelle liste
+  « Cantine »" or "Remplace la liste « Cantine »") and counts changes for
+  that list only. Creating a new list shows only additions.
+- A list keeps the layout of its last import (family export CSV or
+  parent/child Excel). Replacing a list with a file of the other layout is
+  allowed: the preview shows the replacement like any other.
+- **List name**: required, at most 80 characters, unique ignoring case,
+  accents and extra spaces (same rule as template names). The name is only
+  shown in the app, never in emails.
+- **The same family in two lists** (same number and payer email) is
+  allowed: the two entries are independent.
+- **Selection** (§4.2): the selection page shows **one list at a time**,
+  chosen with a list selector. A selection, and so one sending, concerns
+  one list only (no mixing of lists).
+- **Last list used** (opened by default on the selection page): the list
+  last imported into, or last continued from on the selection page
+  ("Continuer"). Merely opening a list does not change it.
+- **Remembered selection** (§4.2): kept **per list**.
+- **Stale selection** (§4.2): tied to the version of the **selected list**
+  (its last import), so importing into another list does not invalidate a
+  selection in progress.
+- **Home page**: one line per list, with its number of families (or
+  children) and email addresses (or parents), its last import date, and the
+  actions Choisir / Renommer / Supprimer.
+- **Rename**: a list can be renamed (same name rules). Its entries,
+  selection and version are kept.
+- **Delete**: a list can be deleted after a confirmation page that shows
+  how many entries and addresses will be deleted. Its entries and
+  remembered selection are deleted; the import history is kept, with the
+  last name of the list. Other lists and templates are not affected.
+- **Import history** (§4.1) records the list of each import and shows its
+  **current** name (after a rename), or its last name followed by
+  "(supprimée)" once the list is deleted. Email history (§4.5) records the
+  list name at sending time, so it stays readable after the list is renamed
+  or deleted.
+- **Existing data**: when this feature is installed, the data already
+  imported becomes one list, named "Liste importée" (the user can rename
+  it). This list is created only if there is data; a fresh install starts
+  with no list.
+
+Decisions confirmed by the user, 2026-11-16 (plan 004).
+
 ### 4.1 Excel import
 
 Status: ✅ implemented (`internal/importer`, `internal/store`, `/import` pages).
@@ -53,7 +123,8 @@ Status: ✅ implemented (`internal/importer`, `internal/store`, `/import` pages)
 - The save runs in **one database transaction**: either the whole file is
   saved, or nothing changes (e.g. on error or crash, the previous data stays).
 - **The Excel file is the source of truth.** Each import replaces the
-  parents and children data:
+  parents and children data **of the list chosen for the import** (§4.0;
+  other lists are not touched):
   - Entries present in the file and already in the database get the values
     from the file (existing values are overwritten).
   - New entries in the file are added.
@@ -66,23 +137,29 @@ Status: ✅ implemented (`internal/importer`, `internal/store`, `/import` pages)
     Matching keeps database IDs stable between imports.
   - A child listed with two parents (two rows, two emails) is stored once
     per parent.
-  - Both formats write the same data: a CSV import deletes the children of
-    an earlier Excel import, and the other way round (shown in the preview).
+  - Both formats write the same data: within one list, a CSV import deletes
+    the children of an earlier Excel import, and the other way round (shown
+    in the preview).
   - In the counts, family entries (with or without a valid email) count as
     children; parents are the valid email addresses only.
 - The preview shows what the import will change: N added, N updated,
   N deleted. Deletions are highlighted so the user can cancel.
 - Email history (§4.5), templates and settings are **not** affected by an
   import. History stays readable even after a child or parent is deleted.
-- Keep a record of each import (date, file name, counts).
+- Keep a record of each import (date, file name, list, counts). The history
+  shows the current name of the list, or its last name followed by
+  "(supprimée)" if the list was deleted (§4.0).
+- Replacing an existing list needs the explicit, server-checked
+  confirmation of §4.0.
 
 - The preview runs the real import in a transaction and rolls it back, so
   what it shows is exactly what the confirmation will do. The checked rows
   wait in memory for 30 minutes under a token, used up only by a successful
   save (a failed save can be retried).
-- If another import was saved between the preview and the confirmation, the
-  confirmation is refused and the user must check the file again, so an
-  import never applies changes its preview did not show.
+- If another import was saved **into the same list** between the preview and
+  the confirmation (or the list was deleted, or the new list name was taken
+  meanwhile), the confirmation is refused and the user must check the file
+  again, so an import never applies changes its preview did not show.
 
 **File format:** to be confirmed with a real file (see §10). Current
 assumption: one row per child; the first non-empty row is the header; other
@@ -159,7 +236,7 @@ Phone numbers, RL names/emails and other columns are not stored.
 **Assumed** (recommended by the architect, not yet confirmed):
 
 - The Excel parent/child import (§4.1) stays available. Each import, CSV or
-  Excel, replaces all the data.
+  Excel, replaces the data of the chosen list (§4.0).
 - A line without `NUMFAM` or without `NOMFACT` blocks the import (a family
   cannot be identified or named without them).
 
@@ -169,6 +246,11 @@ Status: ✅ implemented (plan `docs/plans/001-child-selection.md`). One row per
 child + parent pair; search, selection and counter run in the page; at most
 5,000 children per selection. Class filter not done (no class column yet).
 
+- **One list at a time** (§4.0): the list name is shown at the top; a
+  selector (shown only when there are 2 or more lists) chooses the list.
+  The last list used (last import or last "Continuer", §4.0) opens by
+  default; an unknown list (e.g. deleted) opens the default list with a
+  message.
 - List all children with their parent(s) and email.
 - Search by child or parent name; filter (e.g. by class, if present in the file).
 - Select children with checkboxes; "select all / none" for the current filter.
@@ -178,6 +260,7 @@ child + parent pair; search, selection and counter run in the page; at most
   next time the list opens they are pre-checked (never an entry without a
   valid email). The saved selection of an entry removed by an import
   disappears with it. Nothing is saved when the page is only opened.
+  The remembered selection is kept **per list** (§4.0).
 
 **Family data** (CSV export, §4.1.1; plan `docs/plans/002-csv-import.md`):
 the list shows one row per family entry: family number, billing name, payer
@@ -190,17 +273,18 @@ one. An invalid payer email in a family that also has a valid one gives
 that family an extra, unselectable row.
 
 **Stale selection** (plan 003, confirmed 2026-11-16): the selection is tied
-to the data version (the last import ID), sent with the form. If any import
-was saved between the selection and the composition (or the preview, or
-later the sending), the request is refused and the user selects again
+to the data version, sent with the form. With several lists (§4.0) this is
+the version of the **selected list** (its last import ID): importing into
+another list does not affect it. If an import was saved into that list (or
+the list was deleted) between the selection and the composition (or the
+preview, or later the sending), the request is refused and the user selects again
 ("les données ont changé depuis votre sélection"). This replaces the former
 "N selected rows no longer exist" notice: after a re-import a stale ID
 could point to another child.
 
 ### 4.3 Email composition
 
-Status: plan `docs/plans/003-email-composition.md` approved (2026-11-16),
-not implemented yet.
+Status: ✅ implemented (plan `docs/plans/003-email-composition.md`).
 
 - Subject and body written by the user, plain text first (HTML/rich text later).
 - **Placeholders** replaced per recipient. The names are English, written
@@ -271,6 +355,8 @@ not implemented yet.
 - "Send test email" button.
 - Interface language.
 
+- in Selection: add a checkbox "Tolérence", with red background. Persiste this value.
+
 ## 5. Email providers
 
 The main account is a **Microsoft 365 work account** (Exchange Online).
@@ -334,6 +420,26 @@ Tests use a fake sender; no real email is ever sent from tests.
   follows the interface language.
 
 ## 7. Data model (SQLite)
+
+Planned for family lists (§4.0, plan 004, not implemented yet; migration
+005 rebuilds `parents`, `children` and `last_selection` keeping every ID):
+
+```
+lists          id (AUTOINCREMENT, never reused), name, name_key (unique),
+               created_at, updated_at, used_at (last import or "Continuer")
+parents        + list_id (ON DELETE CASCADE); unique (list_id, email),
+               unique (id, list_id)
+children       + list_id (ON DELETE CASCADE);
+               (parent_id, list_id) references parents (id, list_id):
+               an entry and its parent are always in the same list;
+               no-email key becomes unique (list_id, family_number)
+imports        + list_id (ON DELETE SET NULL), list_name (copy at import time)
+last_selection unchanged (child_id only): the selection of a list is the
+               join with children.list_id, so no redundant list_id
+```
+
+The list version (stale selection, §4.2) is the highest `imports.id` of the
+list. Existing data, if any, moves to a list named "Liste importée".
 
 ```
 parents        id, name, email (unique, lower-case, always valid), created_at, updated_at
@@ -435,6 +541,8 @@ The app starts as a browser tab. It may later run in its own window with
 3. **Import** — Excel upload, preview, save. ✅ (minimal FR/EN i18n added
    with it, since no UI text may be hard-coded)
 4. **Selection** — child list, search, selection. ✅
+4b. **Family lists** — several named lists, import into a new or an
+   existing list, selection per list (§4.0; plan 004). ✅
 5. **Compose & send**
    - 5a. **Compose** — templates, placeholders, preview (plan 003). ✅
    - 5b. **Send** — confirmation, sending queue (fake sender), history.

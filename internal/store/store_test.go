@@ -5,6 +5,8 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+
+	"cafeteria-management/internal/textnorm"
 )
 
 func openTest(t *testing.T) *Store {
@@ -39,7 +41,7 @@ func TestImportFamilies(t *testing.T) {
 	}
 
 	// A dry run changes nothing.
-	sum, err := s.ImportFamilies(ctx, ImportRequest{FileName: "a.xlsx", RowsRead: 3, Rows: first, DryRun: true})
+	sum, err := s.ImportFamilies(ctx, into(t, s, ImportRequest{FileName: "a.xlsx", RowsRead: 3, Rows: first, DryRun: true}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +51,7 @@ func TestImportFamilies(t *testing.T) {
 	assertTotals(t, s, 0, 0)
 	assertImports(t, s, 0)
 
-	sum, err = s.ImportFamilies(ctx, ImportRequest{FileName: "a.xlsx", RowsRead: 3, Rows: first})
+	sum, err = s.ImportFamilies(ctx, into(t, s, ImportRequest{FileName: "a.xlsx", RowsRead: 3, Rows: first}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,17 +66,17 @@ func TestImportFamilies(t *testing.T) {
 		{ParentName: "Marie Dupont-Leroy", ChildName: "LEA DUPONT", Email: "marie@example.fr"},
 		{ParentName: "Ana Silva", ChildName: "Rui Silva", Email: "ana@example.fr"},
 	}
-	preview, err := s.ImportFamilies(ctx, ImportRequest{FileName: "b.xlsx", RowsRead: 2, Rows: second, DryRun: true})
+	preview, err := s.ImportFamilies(ctx, into(t, s, ImportRequest{FileName: "b.xlsx", RowsRead: 2, Rows: second, DryRun: true}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	sum, err = s.ImportFamilies(ctx, ImportRequest{FileName: "b.xlsx", RowsRead: 2, Rows: second, Base: &preview.Base})
+	sum, err = s.ImportFamilies(ctx, into(t, s, ImportRequest{FileName: "b.xlsx", RowsRead: 2, Rows: second, Base: &preview.Base}))
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// The same preview cannot be confirmed twice: the data has changed.
-	if _, err := s.ImportFamilies(ctx, ImportRequest{FileName: "b.xlsx", RowsRead: 2, Rows: second, Base: &preview.Base}); !errors.Is(err, ErrStaleImport) {
+	if _, err := s.ImportFamilies(ctx, into(t, s, ImportRequest{FileName: "b.xlsx", RowsRead: 2, Rows: second, Base: &preview.Base})); !errors.Is(err, ErrStaleImport) {
 		t.Fatalf("stale import: err = %v", err)
 	}
 
@@ -103,7 +105,7 @@ func TestImportFamilies(t *testing.T) {
 	assertTotals(t, s, 2, 2)
 
 	// Importing the same file again changes nothing.
-	sum, err = s.ImportFamilies(ctx, ImportRequest{FileName: "b.xlsx", RowsRead: 2, Rows: second})
+	sum, err = s.ImportFamilies(ctx, into(t, s, ImportRequest{FileName: "b.xlsx", RowsRead: 2, Rows: second}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,14 +125,66 @@ func TestImportFamilies(t *testing.T) {
 	}
 }
 
-func assertTotals(t *testing.T, s *Store, parents, children int) {
+// mainList returns the ID of the first list (by name), or 0 if there is none.
+func mainList(t *testing.T, s *Store) int64 {
 	t.Helper()
-	got, err := s.Totals(context.Background())
+	ls, err := s.Lists(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Parents != parents || got.Children != children {
-		t.Fatalf("totals = %+v, want %d parents, %d children", got, parents, children)
+	if len(ls) == 0 {
+		return 0
+	}
+	return ls[0].ID
+}
+
+// into aims req at the first list, or at a new list "Cantine" if there is
+// none yet, so single-list tests keep reading like one-table tests.
+func into(t *testing.T, s *Store, req ImportRequest) ImportRequest {
+	t.Helper()
+	if id := mainList(t, s); id != 0 {
+		req.ListID = id
+	} else {
+		req.NewListName = "Cantine"
+	}
+	return req
+}
+
+// rawList inserts a list row directly and returns its ID.
+func rawList(t *testing.T, s *Store, name string) int64 {
+	t.Helper()
+	res, err := s.db.Exec(`INSERT INTO lists (name, name_key, created_at, updated_at, used_at) VALUES (?, ?, 't', 't', 't')`,
+		name, textnorm.Key(name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := res.LastInsertId()
+	return id
+}
+
+// totals returns the counts of the first list (zero value if none).
+func totals(t *testing.T, s *Store) List {
+	t.Helper()
+	l, err := s.List(context.Background(), mainList(t, s))
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		t.Fatal(err)
+	}
+	return l
+}
+
+// assertTotals checks the counts summed over all lists.
+func assertTotals(t *testing.T, s *Store, parents, children int) {
+	t.Helper()
+	ls, err := s.Lists(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var p, c int
+	for _, l := range ls {
+		p, c = p+l.Parents, c+l.Children
+	}
+	if p != parents || c != children {
+		t.Fatalf("totals = %d parents, %d children, want %d, %d", p, c, parents, children)
 	}
 }
 

@@ -2,6 +2,19 @@
 {{define "scripts"}}<script src="/static/children.js" defer></script>{{end}}
 {{define "content"}}{{$L := .L}}{{with .Data}}
 <h1>{{if .Families}}{{$L.T "children.title_families"}}{{else}}{{$L.T "children.title"}}{{end}}</h1>
+{{if .List.ID}}
+<p class="muted">{{$L.T "children.list_current" .List.Name}}</p>
+{{if gt (len .Lists) 1}}
+<form method="get" action="/children" class="inline">
+  {{$cur := .List.ID}}
+  <label for="list-select">{{$L.T "children.list_label"}}</label>
+  <select id="list-select" name="list">
+    {{range .Lists}}<option value="{{.ID}}"{{if eq .ID $cur}} selected{{end}}>{{.Name}}</option>{{end}}
+  </select>
+  <button type="submit" class="button-secondary" id="list-show">{{$L.T "children.list_show"}}</button>
+</form>
+{{end}}
+{{end}}
 
 {{if .Error}}<div class="alert alert-error" role="alert">{{.Error}}</div>{{end}}
 
@@ -16,6 +29,7 @@
 <p class="counter" id="counter" role="status" aria-live="polite" data-template="{{if .Families}}{{$L.T "children.counter_families"}}{{else}}{{$L.T "children.counter"}}{{end}}" hidden></p>
 
 <form method="post" action="/compose" class="selection">
+  <input type="hidden" name="list" value="{{.List.ID}}">
   <input type="hidden" name="version" value="{{.Version}}">
   <div class="actions actions-top">
     <button type="submit">{{$L.T "children.continue"}}</button>

@@ -11,6 +11,7 @@ import (
 
 	"cafeteria-management/internal/importer"
 	"cafeteria-management/internal/store"
+	"cafeteria-management/internal/textnorm"
 )
 
 const (
@@ -20,12 +21,27 @@ const (
 	// maxShownIssues is the most errors, and the most warnings, the preview
 	// lists: a crafted or broken file can have thousands.
 	maxShownIssues = 100
+	// maxConfirmBytes bounds the confirmation form (a token and a checkbox).
+	maxConfirmBytes = 1 << 20
+	// newListChoice is the value of the "new list" option of the target select.
+	newListChoice = "new"
 )
 
 type importFormData struct {
 	Error   string
 	Done    *store.ImportRecord
 	History []store.ImportRecord
+	Lists   []store.List
+	// Target and NewName are the typed values of the target fields, shown
+	// again on errors. Target is "", "new" or a list ID as typed.
+	Target  string
+	NewName string
+}
+
+// importTarget holds the target fields as typed by the user.
+type importTarget struct {
+	Choice  string
+	NewName string
 }
 
 type importPreviewData struct {
@@ -35,6 +51,9 @@ type importPreviewData struct {
 	NoChanges bool
 	Token     string // empty when the file has errors and cannot be imported
 	NoEmail   int    // rows without a valid email (family layout)
+	NewList   bool   // the import creates ListName; else it replaces it
+	ListName  string // target list (cleaned name of a new list)
+	Error     string // set only when a replacement is not confirmed
 
 	// First maxShownIssues errors and warnings, and how many are not shown.
 	Errors       []importer.Issue
@@ -58,16 +77,21 @@ func (s *Server) handleImportForm(w http.ResponseWriter, r *http.Request) {
 	if v := r.URL.Query().Get("done"); v != "" {
 		doneID, _ = strconv.ParseInt(v, 10, 64)
 	}
-	s.renderImportForm(w, r, http.StatusOK, "", doneID)
+	s.renderImportForm(w, r, http.StatusOK, "", doneID, importTarget{})
 }
 
-func (s *Server) renderImportForm(w http.ResponseWriter, r *http.Request, status int, errMsg string, doneID int64) {
+func (s *Server) renderImportForm(w http.ResponseWriter, r *http.Request, status int, errMsg string, doneID int64, typed importTarget) {
 	history, err := s.store.Imports(r.Context(), historyLimit)
 	if err != nil {
 		s.serverError(w, r, err)
 		return
 	}
-	data := importFormData{Error: errMsg, History: history}
+	lists, err := s.store.Lists(r.Context())
+	if err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+	data := importFormData{Error: errMsg, History: history, Lists: lists, Target: typed.Choice, NewName: typed.NewName}
 	for i := range history {
 		if doneID != 0 && history[i].ID == doneID {
 			data.Done = &history[i]
@@ -80,20 +104,40 @@ func (s *Server) renderImportForm(w http.ResponseWriter, r *http.Request, status
 // would change. Nothing is saved: the checked rows wait for confirmation.
 func (s *Server) handleImportPreview(w http.ResponseWriter, r *http.Request) {
 	loc := s.localizer(r)
-	userError := func(msg string) {
-		s.renderImportForm(w, r, http.StatusUnprocessableEntity, msg, 0)
-	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
-	file, header, err := r.FormFile("file")
+	// Parse the whole form first: the target is checked before the file is
+	// read (SPEC §4.0), and its errors show whatever the file is.
+	err := r.ParseMultipartForm(32 << 20)
+	typed := importTarget{Choice: r.FormValue("list"), NewName: r.FormValue("list_name")}
+	userError := func(msg string) {
+		s.renderImportForm(w, r, http.StatusUnprocessableEntity, msg, 0, typed)
+	}
 	if err != nil {
 		var tooLarge *http.MaxBytesError
-		switch {
-		case errors.As(err, &tooLarge):
+		if errors.As(err, &tooLarge) {
 			userError(loc.T("import.error.too_large", maxUploadMB))
-		case errors.Is(err, http.ErrMissingFile):
+		} else {
+			userError(loc.T("import.error.unreadable"))
+		}
+		return
+	}
+
+	target, errMsg, err := s.checkImportTarget(r, typed)
+	if err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+	if errMsg != "" {
+		userError(errMsg)
+		return
+	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		if errors.Is(err, http.ErrMissingFile) {
 			userError(loc.T("import.error.no_file"))
-		default:
+		} else {
 			userError(loc.T("import.error.unreadable"))
 		}
 		return
@@ -133,7 +177,7 @@ func (s *Server) handleImportPreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data := importPreviewData{FileName: fileName, Result: res}
+	data := importPreviewData{FileName: fileName, Result: res, NewList: target.listID == 0, ListName: target.name}
 	data.Errors, data.MoreErrors = firstIssues(res.Errors)
 	data.Warnings, data.MoreWarnings = firstIssues(res.Warnings)
 	for _, row := range res.Rows {
@@ -145,34 +189,123 @@ func (s *Server) handleImportPreview(w http.ResponseWriter, r *http.Request) {
 		rows := toImportRows(res.Rows)
 		sum, err := s.store.ImportFamilies(r.Context(), store.ImportRequest{
 			FileName: fileName, RowsRead: res.RowsRead, Rows: rows, DryRun: true,
+			ListID: target.listID, NewListName: target.newName,
 		})
-		if err != nil {
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			userError(loc.T("lists.error.not_found"))
+			return
+		case errors.Is(err, store.ErrNameTaken):
+			userError(loc.T("lists.error.name_taken"))
+			return
+		case err != nil:
 			s.serverError(w, r, fmt.Errorf("preview import: %w", err))
 			return
 		}
 		data.Summary = sum
+		data.ListName = sum.ListName
 		data.NoChanges = !hasChanges(sum.Parents) && !hasChanges(sum.Children)
-		data.Token = s.pending.put(pendingImport{fileName: fileName, rowsRead: res.RowsRead, rows: rows, base: sum.Base})
+		data.Token = s.pending.put(pendingImport{
+			fileName: fileName, rowsRead: res.RowsRead, rows: rows,
+			listID: target.listID, newListName: target.newName, base: sum.Base,
+			preview: withoutToken(data),
+		})
 	}
 	s.render(w, r, http.StatusOK, "import_preview", "import", data)
 }
 
-// handleImportConfirm saves a previously checked file, only if the data has
-// not changed since its preview. The token stays valid if saving fails.
+// checkedTarget is a validated import target: an existing list (listID) or
+// a new one (newName), and the list name shown to the user.
+type checkedTarget struct {
+	listID  int64
+	newName string
+	name    string
+}
+
+// checkImportTarget validates the target fields of the import form. errMsg
+// is a localized user error; err is an unexpected failure.
+func (s *Server) checkImportTarget(r *http.Request, typed importTarget) (t checkedTarget, errMsg string, err error) {
+	loc := s.localizer(r)
+	lists, err := s.store.Lists(r.Context())
+	if err != nil {
+		return t, "", err
+	}
+	switch typed.Choice {
+	case "":
+		return t, loc.T("import.error.list_required"), nil
+	case newListChoice:
+		clean, msg := validateListName(loc, typed.NewName)
+		if msg != "" {
+			return t, msg, nil
+		}
+		key := textnorm.Key(clean)
+		for _, l := range lists {
+			if textnorm.Key(l.Name) == key {
+				return t, loc.T("lists.error.name_taken"), nil
+			}
+		}
+		return checkedTarget{newName: clean, name: clean}, "", nil
+	}
+	id, perr := strconv.ParseInt(typed.Choice, 10, 64)
+	if perr == nil && id > 0 {
+		for _, l := range lists {
+			if l.ID == id {
+				return checkedTarget{listID: id, name: l.Name}, "", nil
+			}
+		}
+	}
+	return t, loc.T("lists.error.not_found"), nil
+}
+
+// withoutToken returns the preview as stored with the pending import.
+func withoutToken(d importPreviewData) importPreviewData {
+	d.Token, d.Error = "", ""
+	return d
+}
+
+// handleImportConfirm saves a previously checked file into the list chosen
+// at preview time, only if that list has not changed since its preview. A
+// replacement also needs the confirmation checkbox, checked here whatever
+// the browser does (SPEC §4.0). The token stays valid if saving fails.
 func (s *Server) handleImportConfirm(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxConfirmBytes)
+	loc := s.localizer(r)
 	token := r.PostFormValue("token")
 	item, ok := s.pending.get(token)
 	if !ok {
-		s.renderImportForm(w, r, http.StatusUnprocessableEntity, s.localizer(r).T("import.error.expired"), 0)
+		s.renderImportForm(w, r, http.StatusUnprocessableEntity, loc.T("import.error.expired"), 0, importTarget{})
 		return
 	}
 
-	sum, err := s.store.ImportFamilies(r.Context(), store.ImportRequest{
-		FileName: item.fileName, RowsRead: item.rowsRead, Rows: item.rows, Base: &item.base,
-	})
-	if errors.Is(err, store.ErrStaleImport) {
+	// Nothing is read from or written to the database before this check.
+	if item.listID != 0 && r.PostFormValue("confirm_replace") != "1" {
+		data := item.preview
+		data.Token = token
+		data.Error = loc.T("import.error.replace_unconfirmed", data.ListName)
+		s.render(w, r, http.StatusUnprocessableEntity, "import_preview", "import", data)
+		return
+	}
+
+	req := store.ImportRequest{
+		FileName: item.fileName, RowsRead: item.rowsRead, Rows: item.rows,
+		ListID: item.listID, NewListName: item.newListName,
+	}
+	if item.listID != 0 {
+		req.Base = &item.base
+	}
+	sum, err := s.store.ImportFamilies(r.Context(), req)
+	var conflict string
+	switch {
+	case errors.Is(err, store.ErrStaleImport):
+		conflict = "import.error.stale"
+	case errors.Is(err, store.ErrNotFound):
+		conflict = "import.error.list_gone"
+	case errors.Is(err, store.ErrNameTaken):
+		conflict = "import.error.list_name_taken"
+	}
+	if conflict != "" {
 		s.pending.remove(token)
-		s.renderImportForm(w, r, http.StatusConflict, s.localizer(r).T("import.error.stale"), 0)
+		s.renderImportForm(w, r, http.StatusConflict, loc.T(conflict), 0, importTarget{})
 		return
 	}
 	if err != nil {
@@ -180,8 +313,8 @@ func (s *Server) handleImportConfirm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.pending.remove(token)
-	// Counts only: no names or emails in logs.
-	slog.Info("import saved", "id", sum.ImportID,
+	// IDs and counts only: no list names, names or emails in logs.
+	slog.Info("import saved", "id", sum.ImportID, "list_id", sum.ListID,
 		"children_added", sum.Children.Added, "children_updated", sum.Children.Updated, "children_deleted", sum.Children.Deleted,
 		"parents_added", sum.Parents.Added, "parents_updated", sum.Parents.Updated, "parents_deleted", sum.Parents.Deleted)
 

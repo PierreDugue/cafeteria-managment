@@ -19,7 +19,7 @@ import (
 )
 
 // pageNames are the templates in web/templates rendered inside layout.html.
-var pageNames = []string{"home", "import", "import_preview", "children", "compose", "templates", "template_form", "template_delete"}
+var pageNames = []string{"home", "import", "import_preview", "children", "compose", "templates", "template_form", "template_delete", "list_rename", "list_delete"}
 
 // Server serves the web UI.
 type Server struct {
@@ -58,6 +58,10 @@ func New(version string, st *store.Store) (*Server, error) {
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(static)))
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.HandleFunc("GET /{$}", s.handleHome)
+	mux.HandleFunc("GET /lists/{id}/rename", s.handleListRenameForm)
+	mux.HandleFunc("POST /lists/{id}/rename", s.handleListRename)
+	mux.HandleFunc("GET /lists/{id}/delete", s.handleListDeleteConfirm)
+	mux.HandleFunc("POST /lists/{id}/delete", s.handleListDelete)
 	mux.HandleFunc("GET /import", s.handleImportForm)
 	mux.HandleFunc("POST /import/preview", s.handleImportPreview)
 	mux.HandleFunc("POST /import/confirm", s.handleImportConfirm)
@@ -143,28 +147,6 @@ func (s *Server) serverError(w http.ResponseWriter, r *http.Request, err error) 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	_, _ = w.Write([]byte("ok"))
-}
-
-func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
-	totals, err := s.store.Totals(r.Context())
-	if err != nil {
-		s.serverError(w, r, err)
-		return
-	}
-	last, err := s.store.Imports(r.Context(), 1)
-	if err != nil {
-		s.serverError(w, r, err)
-		return
-	}
-
-	data := struct {
-		Totals     store.Totals
-		LastImport *store.ImportRecord
-	}{Totals: totals}
-	if len(last) > 0 {
-		data.LastImport = &last[0]
-	}
-	s.render(w, r, http.StatusOK, "home", "home", data)
 }
 
 // localhostOnly rejects requests whose Host is not a loopback name.

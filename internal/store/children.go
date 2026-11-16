@@ -51,64 +51,61 @@ ORDER BY CASE WHEN c.family_number = '' THEN c.name_key
               ELSE MIN(c.name_key) OVER (PARTITION BY c.family_number) END,
          c.family_number, c.name_key, p.id IS NULL, p.email, c.id`
 
-// Children returns all children (and family entries) with their parent,
-// ordered by normalized name, then parent email.
-func (s *Store) Children(ctx context.Context) ([]Child, error) {
-	return queryChildren(ctx, s.db, childrenSelect+childrenOrder)
+// Children returns the children (and family entries) of one list with their
+// parent, ordered by normalized name, then parent email.
+func (s *Store) Children(ctx context.Context, listID int64) ([]Child, error) {
+	return queryChildren(ctx, s.db, childrenSelect+` WHERE c.list_id = ?`+childrenOrder, listID)
 }
 
-// ChildrenByIDs is like Children but only for the given IDs. Unknown IDs are
-// skipped; no IDs means no query and an empty result.
-func (s *Store) ChildrenByIDs(ctx context.Context, ids []int64) ([]Child, error) {
-	return childrenByIDs(ctx, s.db, ids)
-}
-
-// DataVersion returns the current data version: the ID of the last import
-// (0 if none). Data only changes through imports, and import rows are never
-// deleted, so it only grows.
-func (s *Store) DataVersion(ctx context.Context) (int64, error) {
-	return lastImportID(ctx, s.db)
+// ChildrenByIDs is like Children but only for the given IDs. IDs unknown or
+// of another list are skipped; no IDs means no query and an empty result.
+func (s *Store) ChildrenByIDs(ctx context.Context, listID int64, ids []int64) ([]Child, error) {
+	return childrenByIDs(ctx, s.db, listID, ids)
 }
 
 // SelectedChildren is like ChildrenByIDs, but fails with ErrStaleSelection
-// unless the data version is still version. The check and the read share one
-// transaction, so an import cannot slip between them.
-func (s *Store) SelectedChildren(ctx context.Context, version int64, ids []int64) ([]Child, error) {
+// unless the list still exists at version (see ListVersion). The check and
+// the read share one transaction, so an import cannot slip between them.
+func (s *Store) SelectedChildren(ctx context.Context, listID, version int64, ids []int64) ([]Child, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
 
-	current, err := lastImportID(ctx, tx)
+	current, err := listVersion(ctx, tx, listID)
+	if errors.Is(err, ErrNotFound) {
+		return nil, ErrStaleSelection
+	}
 	if err != nil {
 		return nil, err
 	}
 	if current != version {
 		return nil, ErrStaleSelection
 	}
-	return childrenByIDs(ctx, tx, ids)
+	return childrenByIDs(ctx, tx, listID, ids)
 }
 
-func lastImportID(ctx context.Context, q querier) (int64, error) {
-	var id int64
-	if err := q.QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0) FROM imports`).Scan(&id); err != nil {
-		return 0, fmt.Errorf("read last import: %w", err)
-	}
-	return id, nil
-}
-
-func childrenByIDs(ctx context.Context, q querier, ids []int64) ([]Child, error) {
-	if len(ids) == 0 {
-		return []Child{}, nil
-	}
-	// Only placeholders go into the SQL string, never values.
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+// idPlaceholders returns "?,?,..." for ids and the ids as query arguments.
+// Only placeholders go into the SQL string, never values.
+func idPlaceholders(ids []int64) (string, []any) {
 	args := make([]any, len(ids))
 	for i, id := range ids {
 		args[i] = id
 	}
-	return queryChildren(ctx, q, childrenSelect+" WHERE c.id IN ("+placeholders+")"+childrenOrder, args...)
+	return strings.TrimSuffix(strings.Repeat("?,", len(ids)), ","), args
+}
+
+func childrenByIDs(ctx context.Context, q querier, listID int64, ids []int64) ([]Child, error) {
+	if len(ids) == 0 {
+		return []Child{}, nil
+	}
+	placeholders, args := idPlaceholders(ids)
+	// The list filter drops IDs of other lists: they can never reach the
+	// recipients.
+	return queryChildren(ctx, q,
+		childrenSelect+" WHERE c.list_id = ? AND c.id IN ("+placeholders+")"+childrenOrder,
+		append([]any{listID}, args...)...)
 }
 
 func queryChildren(ctx context.Context, q querier, query string, args ...any) ([]Child, error) {
@@ -132,39 +129,48 @@ func queryChildren(ctx context.Context, q querier, query string, args ...any) ([
 	return out, nil
 }
 
-// SaveSelection replaces the saved selection with ids, keeping only the
-// entries that exist and have a valid email. The last selection is a
-// convenience: nothing else reads it.
-func (s *Store) SaveSelection(ctx context.Context, ids []int64) error {
+// SaveSelection replaces the saved selection of one list with ids, keeping
+// only the entries of that list that have a valid email, and makes it the
+// last list used. The last selection is a convenience: nothing else reads
+// it. The other lists' saved selections are untouched (ErrNotFound).
+func (s *Store) SaveSelection(ctx context.Context, listID int64, ids []int64) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.ExecContext(ctx, `DELETE FROM last_selection`); err != nil {
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM last_selection WHERE child_id IN (SELECT id FROM children WHERE list_id = ?)`, listID); err != nil {
 		return fmt.Errorf("clear last selection: %w", err)
 	}
 	if len(ids) > 0 {
-		// Only placeholders go into the SQL string, never values.
-		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
-		args := make([]any, len(ids))
-		for i, id := range ids {
-			args[i] = id
-		}
+		placeholders, args := idPlaceholders(ids)
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO last_selection (child_id)
-			 SELECT id FROM children WHERE parent_id IS NOT NULL AND id IN (`+placeholders+`)`,
-			args...); err != nil {
+			 SELECT id FROM children
+			 WHERE list_id = ? AND parent_id IS NOT NULL AND id IN (`+placeholders+`)`,
+			append([]any{listID}, args...)...); err != nil {
 			return fmt.Errorf("save last selection: %w", err)
 		}
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE lists SET used_at = ? WHERE id = ?`, s.timestamp(), listID)
+	if err != nil {
+		return fmt.Errorf("mark list used: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return ErrNotFound
 	}
 	return tx.Commit()
 }
 
-// SavedSelection returns the IDs saved by SaveSelection that still exist.
-func (s *Store) SavedSelection(ctx context.Context) (map[int64]bool, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT child_id FROM last_selection`)
+// SavedSelection returns the IDs saved by SaveSelection for one list that
+// still exist.
+func (s *Store) SavedSelection(ctx context.Context, listID int64) (map[int64]bool, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT s.child_id FROM last_selection s JOIN children c ON c.id = s.child_id WHERE c.list_id = ?`, listID)
 	if err != nil {
 		return nil, fmt.Errorf("query last selection: %w", err)
 	}

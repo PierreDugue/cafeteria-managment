@@ -124,3 +124,8 @@ code { background: var(--surface); border: 1px solid var(--border); border-radiu
 .preview-body { white-space: pre-wrap; border-top: 1px solid var(--border); margin-top: 8px; padding-top: 8px; overflow-wrap: anywhere; }
 .row-actions { white-space: nowrap; }
 .row-actions a { margin-right: 12px; }
+
+/* Family lists (SPEC §4.0) */
+.card form .field { flex: 1 1 100%; margin: 0; }
+.confirm-check { flex-basis: 100%; margin: 0 0 8px; }
+.confirm-check input { margin-right: 6px; }

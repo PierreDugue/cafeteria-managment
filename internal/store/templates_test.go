@@ -235,66 +235,27 @@ func TestImportsLeaveTemplatesUntouched(t *testing.T) {
 	}
 }
 
-func TestDataVersion(t *testing.T) {
-	ctx := context.Background()
-	s := openTest(t)
-	version := func() int64 {
-		t.Helper()
-		v, err := s.DataVersion(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return v
-	}
-	if v := version(); v != 0 {
-		t.Fatalf("empty db version = %d", v)
-	}
-	rows := []ImportRow{{ParentName: "Marie", ChildName: "Léa", Email: "m@example.fr"}}
-
-	// A preview is rolled back.
-	if _, err := s.ImportFamilies(ctx, ImportRequest{FileName: "a.xlsx", RowsRead: 1, Rows: rows, DryRun: true}); err != nil {
-		t.Fatal(err)
-	}
-	if v := version(); v != 0 {
-		t.Fatalf("version after preview = %d", v)
-	}
-
-	sum := importRows(t, s, rows)
-	if v := version(); v != sum.ImportID || v == 0 {
-		t.Fatalf("version = %d, import ID %d", v, sum.ImportID)
-	}
-	first := version()
-	sum = importRows(t, s, append(rows, ImportRow{ParentName: "Paul", ChildName: "Tom", Email: "p@example.fr"}))
-	if v := version(); v != sum.ImportID || v <= first {
-		t.Fatalf("version = %d, previous %d", v, first)
-	}
-
-	s.Close()
-	if _, err := s.DataVersion(ctx); err == nil {
-		t.Error("closed store: want error")
-	}
-}
-
 func TestSelectedChildren(t *testing.T) {
 	ctx := context.Background()
 	s := openTest(t)
 	seedChildren(t, s, childrenRows)
-	version, err := s.DataVersion(ctx)
+	lid := mainList(t, s)
+	version, err := s.ListVersion(ctx, lid)
 	if err != nil {
 		t.Fatal(err)
 	}
-	all, err := s.Children(ctx)
+	all, err := s.Children(ctx, lid)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	t.Run("current version gives the same rows as ChildrenByIDs", func(t *testing.T) {
 		ids := []int64{all[4].ID, all[1].ID, 9999, -1, 0}
-		got, err := s.SelectedChildren(ctx, version, ids)
+		got, err := s.SelectedChildren(ctx, lid, version, ids)
 		if err != nil {
 			t.Fatal(err)
 		}
-		want, _ := s.ChildrenByIDs(ctx, ids)
+		want, _ := s.ChildrenByIDs(ctx, lid, ids)
 		if !slices.Equal(got, want) || len(got) != 2 {
 			t.Fatalf("got %+v, want %+v", got, want)
 		}
@@ -302,7 +263,7 @@ func TestSelectedChildren(t *testing.T) {
 
 	t.Run("empty ids with the right version", func(t *testing.T) {
 		for _, ids := range [][]int64{nil, {}} {
-			got, err := s.SelectedChildren(ctx, version, ids)
+			got, err := s.SelectedChildren(ctx, lid, version, ids)
 			if err != nil || got == nil || len(got) != 0 {
 				t.Fatalf("got %#v, %v", got, err)
 			}
@@ -311,14 +272,14 @@ func TestSelectedChildren(t *testing.T) {
 
 	t.Run("older, newer and negative versions are stale", func(t *testing.T) {
 		for _, v := range []int64{version - 1, version + 1, 0, -1} {
-			if _, err := s.SelectedChildren(ctx, v, []int64{all[0].ID}); !errors.Is(err, ErrStaleSelection) {
+			if _, err := s.SelectedChildren(ctx, lid, v, []int64{all[0].ID}); !errors.Is(err, ErrStaleSelection) {
 				t.Errorf("version %d: err = %v", v, err)
 			}
 		}
 	})
 
 	t.Run("empty ids with the wrong version", func(t *testing.T) {
-		if _, err := s.SelectedChildren(ctx, version+1, nil); !errors.Is(err, ErrStaleSelection) {
+		if _, err := s.SelectedChildren(ctx, lid, version+1, nil); !errors.Is(err, ErrStaleSelection) {
 			t.Fatalf("err = %v", err)
 		}
 	})
@@ -326,14 +287,15 @@ func TestSelectedChildren(t *testing.T) {
 	t.Run("an import makes the old version stale", func(t *testing.T) {
 		s := openTest(t)
 		seedChildren(t, s, childrenRows)
-		v, _ := s.DataVersion(ctx)
-		cs, _ := s.Children(ctx)
+		lid := mainList(t, s)
+		v, _ := s.ListVersion(ctx, lid)
+		cs, _ := s.Children(ctx, lid)
 		seedChildren(t, s, childrenRows[:1]) // same file shape, new import
-		if _, err := s.SelectedChildren(ctx, v, []int64{cs[0].ID}); !errors.Is(err, ErrStaleSelection) {
+		if _, err := s.SelectedChildren(ctx, lid, v, []int64{cs[0].ID}); !errors.Is(err, ErrStaleSelection) {
 			t.Fatalf("err = %v", err)
 		}
-		v2, _ := s.DataVersion(ctx)
-		if _, err := s.SelectedChildren(ctx, v2, []int64{cs[0].ID}); err != nil {
+		v2, _ := s.ListVersion(ctx, lid)
+		if _, err := s.SelectedChildren(ctx, lid, v2, []int64{cs[0].ID}); err != nil {
 			t.Fatalf("new version: %v", err)
 		}
 	})
@@ -341,13 +303,14 @@ func TestSelectedChildren(t *testing.T) {
 	t.Run("entries without email are returned for the caller to refuse", func(t *testing.T) {
 		s := openTest(t)
 		importRows(t, s, []ImportRow{fam("10", "DUPONT", "d@example.fr", ""), fam("20", "NOMAIL", "", "bad@")})
-		v, _ := s.DataVersion(ctx)
-		cs, _ := s.Children(ctx)
+		lid := mainList(t, s)
+		v, _ := s.ListVersion(ctx, lid)
+		cs, _ := s.Children(ctx, lid)
 		ids := []int64{}
 		for _, c := range cs {
 			ids = append(ids, c.ID)
 		}
-		got, err := s.SelectedChildren(ctx, v, ids)
+		got, err := s.SelectedChildren(ctx, lid, v, ids)
 		if err != nil || len(got) != 2 {
 			t.Fatalf("got %+v, %v", got, err)
 		}
@@ -367,7 +330,7 @@ func TestSelectedChildren(t *testing.T) {
 		for i := range ids {
 			ids[i] = int64(i + 1)
 		}
-		got, err := s.SelectedChildren(ctx, version, ids)
+		got, err := s.SelectedChildren(ctx, lid, version, ids)
 		if err != nil || len(got) != len(all) {
 			t.Fatalf("got %d, %v", len(got), err)
 		}
@@ -376,7 +339,7 @@ func TestSelectedChildren(t *testing.T) {
 	t.Run("closed store", func(t *testing.T) {
 		c := openTest(t)
 		c.Close()
-		if _, err := c.SelectedChildren(ctx, 0, []int64{1}); err == nil || errors.Is(err, ErrStaleSelection) {
+		if _, err := c.SelectedChildren(ctx, 1, 0, []int64{1}); err == nil || errors.Is(err, ErrStaleSelection) {
 			t.Fatalf("err = %v", err)
 		}
 	})
@@ -386,12 +349,13 @@ func TestImportFamiliesStaleStillWorksWithSharedVersionRead(t *testing.T) {
 	ctx := context.Background()
 	s := openTest(t)
 	rows := []ImportRow{{ParentName: "Marie", ChildName: "Léa", Email: "m@example.fr"}}
-	preview, err := s.ImportFamilies(ctx, ImportRequest{FileName: "a.xlsx", RowsRead: 1, Rows: rows, DryRun: true})
+	importRows(t, s, rows)
+	preview, err := s.ImportFamilies(ctx, into(t, s, ImportRequest{FileName: "a.xlsx", RowsRead: 1, Rows: rows, DryRun: true}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	importRows(t, s, rows) // someone else imports in between
-	if _, err := s.ImportFamilies(ctx, ImportRequest{FileName: "a.xlsx", RowsRead: 1, Rows: rows, Base: &preview.Base}); !errors.Is(err, ErrStaleImport) {
+	if _, err := s.ImportFamilies(ctx, into(t, s, ImportRequest{FileName: "a.xlsx", RowsRead: 1, Rows: rows, Base: &preview.Base})); !errors.Is(err, ErrStaleImport) {
 		t.Fatalf("err = %v", err)
 	}
 }

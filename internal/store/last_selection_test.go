@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -20,9 +21,9 @@ func entryID(t *testing.T, s *Store, name string) int64 {
 	return 0
 }
 
-func savedIDs(t *testing.T, s *Store) []int64 {
+func savedIDs(t *testing.T, s *Store, listID int64) []int64 {
 	t.Helper()
-	m, err := s.SavedSelection(context.Background())
+	m, err := s.SavedSelection(context.Background(), listID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +44,7 @@ func sortedIDs(ids ...int64) []int64 {
 }
 
 func TestSavedSelectionEmptyDatabase(t *testing.T) {
-	m, err := openTest(t).SavedSelection(context.Background())
+	m, err := openTest(t).SavedSelection(context.Background(), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,16 +63,16 @@ func TestSaveSelection(t *testing.T) {
 
 	t.Run("saves and replaces the previous set", func(t *testing.T) {
 		s, zoe, emile, alice := setup(t)
-		if err := s.SaveSelection(ctx, []int64{zoe, emile}); err != nil {
+		if err := s.SaveSelection(ctx, mainList(t, s), []int64{zoe, emile}); err != nil {
 			t.Fatal(err)
 		}
-		if got, want := savedIDs(t, s), sortedIDs(zoe, emile); !slices.Equal(got, want) {
+		if got, want := savedIDs(t, s, mainList(t, s)), sortedIDs(zoe, emile); !slices.Equal(got, want) {
 			t.Fatalf("saved = %v, want %v", got, want)
 		}
-		if err := s.SaveSelection(ctx, []int64{alice, zoe}); err != nil {
+		if err := s.SaveSelection(ctx, mainList(t, s), []int64{alice, zoe}); err != nil {
 			t.Fatal(err)
 		}
-		if got, want := savedIDs(t, s), sortedIDs(alice, zoe); !slices.Equal(got, want) {
+		if got, want := savedIDs(t, s, mainList(t, s)), sortedIDs(alice, zoe); !slices.Equal(got, want) {
 			t.Fatalf("saved = %v, want %v (Émile must be gone)", got, want)
 		}
 	})
@@ -80,34 +81,34 @@ func TestSaveSelection(t *testing.T) {
 		s, zoe, _, _ := setup(t)
 		// Duplicate IDs in one call must not violate the primary key.
 		for i := 0; i < 2; i++ {
-			if err := s.SaveSelection(ctx, []int64{zoe, zoe}); err != nil {
+			if err := s.SaveSelection(ctx, mainList(t, s), []int64{zoe, zoe}); err != nil {
 				t.Fatalf("call %d: %v", i, err)
 			}
 		}
-		if got := savedIDs(t, s); !slices.Equal(got, []int64{zoe}) {
+		if got := savedIDs(t, s, mainList(t, s)); !slices.Equal(got, []int64{zoe}) {
 			t.Fatalf("saved = %v", got)
 		}
 	})
 
 	t.Run("unknown and non positive IDs are ignored", func(t *testing.T) {
 		s, zoe, _, _ := setup(t)
-		if err := s.SaveSelection(ctx, []int64{zoe, 424242, 0, -3}); err != nil {
+		if err := s.SaveSelection(ctx, mainList(t, s), []int64{zoe, 424242, 0, -3}); err != nil {
 			t.Fatal(err)
 		}
-		if got := savedIDs(t, s); !slices.Equal(got, []int64{zoe}) {
+		if got := savedIDs(t, s, mainList(t, s)); !slices.Equal(got, []int64{zoe}) {
 			t.Fatalf("saved = %v", got)
 		}
 	})
 
 	t.Run("only unknown IDs clear the previous set", func(t *testing.T) {
 		s, zoe, _, _ := setup(t)
-		if err := s.SaveSelection(ctx, []int64{zoe}); err != nil {
+		if err := s.SaveSelection(ctx, mainList(t, s), []int64{zoe}); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.SaveSelection(ctx, []int64{424242}); err != nil {
+		if err := s.SaveSelection(ctx, mainList(t, s), []int64{424242}); err != nil {
 			t.Fatal(err)
 		}
-		if got := savedIDs(t, s); len(got) != 0 {
+		if got := savedIDs(t, s, mainList(t, s)); len(got) != 0 {
 			t.Fatalf("saved = %v", got)
 		}
 	})
@@ -116,25 +117,25 @@ func TestSaveSelection(t *testing.T) {
 		for name, ids := range map[string][]int64{"empty": {}, "nil": nil} {
 			t.Run(name, func(t *testing.T) {
 				s, zoe, emile, _ := setup(t)
-				if err := s.SaveSelection(ctx, []int64{zoe, emile}); err != nil {
+				if err := s.SaveSelection(ctx, mainList(t, s), []int64{zoe, emile}); err != nil {
 					t.Fatal(err)
 				}
-				if err := s.SaveSelection(ctx, ids); err != nil {
+				if err := s.SaveSelection(ctx, mainList(t, s), ids); err != nil {
 					t.Fatal(err)
 				}
-				if got := savedIDs(t, s); len(got) != 0 {
+				if got := savedIDs(t, s, mainList(t, s)); len(got) != 0 {
 					t.Fatalf("saved = %v", got)
 				}
 			})
 		}
 	})
 
-	t.Run("saving on an empty database", func(t *testing.T) {
+	t.Run("saving for a list that does not exist", func(t *testing.T) {
 		s := openTest(t)
-		if err := s.SaveSelection(ctx, []int64{1, 2}); err != nil {
-			t.Fatal(err)
+		if err := s.SaveSelection(ctx, 1, []int64{1, 2}); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("err = %v, want ErrNotFound", err)
 		}
-		if got := savedIDs(t, s); len(got) != 0 {
+		if got := savedIDs(t, s, mainList(t, s)); len(got) != 0 {
 			t.Fatalf("saved = %v", got)
 		}
 	})
@@ -143,10 +144,10 @@ func TestSaveSelection(t *testing.T) {
 		s := openTest(t)
 		importRows(t, s, []ImportRow{fam("10", "DUPONT", "d@example.fr", ""), fam("20", "NOMAIL", "", ""), fam("30", "BADMAIL", "", "oops")})
 		ok, noMail, bad := entryID(t, s, "DUPONT"), entryID(t, s, "NOMAIL"), entryID(t, s, "BADMAIL")
-		if err := s.SaveSelection(ctx, []int64{ok, noMail, bad}); err != nil {
+		if err := s.SaveSelection(ctx, mainList(t, s), []int64{ok, noMail, bad}); err != nil {
 			t.Fatal(err)
 		}
-		if got := savedIDs(t, s); !slices.Equal(got, []int64{ok}) {
+		if got := savedIDs(t, s, mainList(t, s)); !slices.Equal(got, []int64{ok}) {
 			t.Fatalf("saved = %v, want only %d", got, ok)
 		}
 	})
@@ -158,36 +159,37 @@ func TestSaveSelection(t *testing.T) {
 			ids = append(ids, i)
 		}
 		ids = append(ids, zoe)
-		if err := s.SaveSelection(ctx, ids); err != nil {
+		if err := s.SaveSelection(ctx, mainList(t, s), ids); err != nil {
 			t.Fatal(err)
 		}
-		if got := savedIDs(t, s); !slices.Equal(got, []int64{zoe}) {
+		if got := savedIDs(t, s, mainList(t, s)); !slices.Equal(got, []int64{zoe}) {
 			t.Fatalf("saved = %v", got)
 		}
 	})
 
 	t.Run("canceled context changes nothing", func(t *testing.T) {
 		s, zoe, emile, _ := setup(t)
-		if err := s.SaveSelection(ctx, []int64{zoe}); err != nil {
+		if err := s.SaveSelection(ctx, mainList(t, s), []int64{zoe}); err != nil {
 			t.Fatal(err)
 		}
 		canceled, cancel := context.WithCancel(ctx)
 		cancel()
-		if err := s.SaveSelection(canceled, []int64{emile}); err == nil {
+		if err := s.SaveSelection(canceled, mainList(t, s), []int64{emile}); err == nil {
 			t.Fatal("want an error")
 		}
-		if got := savedIDs(t, s); !slices.Equal(got, []int64{zoe}) {
+		if got := savedIDs(t, s, mainList(t, s)); !slices.Equal(got, []int64{zoe}) {
 			t.Fatalf("saved = %v, want the previous set", got)
 		}
 	})
 
 	t.Run("closed store", func(t *testing.T) {
 		s, zoe, _, _ := setup(t)
+		lid := mainList(t, s)
 		s.Close()
-		if err := s.SaveSelection(ctx, []int64{zoe}); err == nil {
+		if err := s.SaveSelection(ctx, lid, []int64{zoe}); err == nil {
 			t.Error("SaveSelection: want an error")
 		}
-		if _, err := s.SavedSelection(ctx); err == nil {
+		if _, err := s.SavedSelection(ctx, lid); err == nil {
 			t.Error("SavedSelection: want an error")
 		}
 	})
@@ -203,7 +205,7 @@ func TestSavedSelectionFollowsImports(t *testing.T) {
 			{ParentName: "Bob Durand", ChildName: "Bastien", Email: "bob@example.com"},
 		})
 		alice, bastien := entryID(t, s, "Alice"), entryID(t, s, "Bastien")
-		if err := s.SaveSelection(ctx, []int64{alice, bastien}); err != nil {
+		if err := s.SaveSelection(ctx, mainList(t, s), []int64{alice, bastien}); err != nil {
 			t.Fatal(err)
 		}
 
@@ -212,14 +214,14 @@ func TestSavedSelectionFollowsImports(t *testing.T) {
 			{ParentName: "Anne Martin", ChildName: "Alice", Email: "anne@example.com"},
 			{ParentName: "Carl Petit", ChildName: "Chloé", Email: "carl@example.com"},
 		})
-		if got := savedIDs(t, s); !slices.Equal(got, []int64{alice}) {
+		if got := savedIDs(t, s, mainList(t, s)); !slices.Equal(got, []int64{alice}) {
 			t.Fatalf("saved = %v, want only Alice %d (kept entry stays saved)", got, alice)
 		}
 		chloe := entryID(t, s, "Chloé")
 		if chloe == bastien {
 			t.Logf("ID %d was reused by the new entry", chloe)
 		}
-		m, _ := s.SavedSelection(ctx)
+		m, _ := s.SavedSelection(ctx, mainList(t, s))
 		if m[chloe] || m[bastien] {
 			t.Errorf("new entry %d or deleted entry %d is pre-selected: %v", chloe, bastien, m)
 		}
@@ -233,11 +235,11 @@ func TestSavedSelectionFollowsImports(t *testing.T) {
 		s := openTest(t)
 		seedChildren(t, s, childrenRows)
 		zoe := entryID(t, s, "Zoé")
-		if err := s.SaveSelection(ctx, []int64{zoe}); err != nil {
+		if err := s.SaveSelection(ctx, mainList(t, s), []int64{zoe}); err != nil {
 			t.Fatal(err)
 		}
 		seedChildren(t, s, []ImportRow{{ParentName: "Anne Martin", ChildName: "Alice", Email: "anne@example.com"}})
-		if got := savedIDs(t, s); len(got) != 0 {
+		if got := savedIDs(t, s, mainList(t, s)); len(got) != 0 {
 			t.Fatalf("saved = %v", got)
 		}
 	})
@@ -246,11 +248,11 @@ func TestSavedSelectionFollowsImports(t *testing.T) {
 		s := openTest(t)
 		seedChildren(t, s, childrenRows)
 		zoe, emile := entryID(t, s, "Zoé"), entryID(t, s, "Émile")
-		if err := s.SaveSelection(ctx, []int64{zoe, emile}); err != nil {
+		if err := s.SaveSelection(ctx, mainList(t, s), []int64{zoe, emile}); err != nil {
 			t.Fatal(err)
 		}
 		seedChildren(t, s, childrenRows)
-		if got, want := savedIDs(t, s), sortedIDs(zoe, emile); !slices.Equal(got, want) {
+		if got, want := savedIDs(t, s, mainList(t, s)), sortedIDs(zoe, emile); !slices.Equal(got, want) {
 			t.Fatalf("saved = %v, want %v", got, want)
 		}
 	})
@@ -259,11 +261,11 @@ func TestSavedSelectionFollowsImports(t *testing.T) {
 		s := openTest(t)
 		importRows(t, s, []ImportRow{fam("10", "DUPONT", "d@example.fr", ""), fam("20", "MARTIN", "m@example.fr", "")})
 		d, m := entryID(t, s, "DUPONT"), entryID(t, s, "MARTIN")
-		if err := s.SaveSelection(ctx, []int64{d, m}); err != nil {
+		if err := s.SaveSelection(ctx, mainList(t, s), []int64{d, m}); err != nil {
 			t.Fatal(err)
 		}
 		importRows(t, s, []ImportRow{fam("10", "DUPONT", "d@example.fr", "")})
-		if got := savedIDs(t, s); !slices.Equal(got, []int64{d}) {
+		if got := savedIDs(t, s, mainList(t, s)); !slices.Equal(got, []int64{d}) {
 			t.Fatalf("saved = %v, want %v", got, []int64{d})
 		}
 	})
@@ -307,7 +309,7 @@ func TestMigration004KeepsExistingData(t *testing.T) {
 	if err := s.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil || version < 4 {
 		t.Fatalf("version = %d, %v", version, err)
 	}
-	if got := savedIDs(t, s); len(got) != 0 {
+	if got := savedIDs(t, s, mainList(t, s)); len(got) != 0 {
 		t.Fatalf("saved = %v, want none after migrating", got)
 	}
 	if cs := allChildren(t, s); len(cs) != 1 || cs[0].ID != 7 || cs[0].Email != "marie@example.fr" {
@@ -316,10 +318,10 @@ func TestMigration004KeepsExistingData(t *testing.T) {
 	if ts, err := s.Templates(ctx); err != nil || len(ts) != 1 || ts[0].Name != "Menu" {
 		t.Fatalf("templates = %+v, %v", ts, err)
 	}
-	if err := s.SaveSelection(ctx, []int64{7}); err != nil {
+	if err := s.SaveSelection(ctx, mainList(t, s), []int64{7}); err != nil {
 		t.Fatal(err)
 	}
-	if got := savedIDs(t, s); !slices.Equal(got, []int64{7}) {
+	if got := savedIDs(t, s, mainList(t, s)); !slices.Equal(got, []int64{7}) {
 		t.Fatalf("saved = %v", got)
 	}
 }

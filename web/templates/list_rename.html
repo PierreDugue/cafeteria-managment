@@ -1,0 +1,17 @@
+{{define "title"}}{{.L.T "lists.rename_title"}}{{end}}
+{{define "content"}}{{$L := .L}}{{with .Data}}
+<h1>{{$L.T "lists.rename_title"}}</h1>
+
+{{if .Error}}<div class="alert alert-error" role="alert">{{.Error}}</div>{{end}}
+
+<form method="post" action="/lists/{{.ID}}/rename" class="compose">
+  <div class="field">
+    <label for="name">{{$L.T "lists.name_label"}}</label>
+    <input type="text" id="name" name="name" maxlength="{{.MaxName}}" value="{{.Name}}" autocomplete="off" required>
+  </div>
+  <div class="actions">
+    <button type="submit">{{$L.T "lists.save"}}</button>
+    <a class="button button-secondary" href="/">{{$L.T "lists.cancel"}}</a>
+  </div>
+</form>
+{{end}}{{end}}

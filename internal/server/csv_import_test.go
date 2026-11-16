@@ -24,7 +24,6 @@ func captureLogs(t *testing.T) *bytes.Buffer {
 
 func TestCSVImportFlow(t *testing.T) {
 	s, st := newTestServer(t)
-	ctx := context.Background()
 	logs := captureLogs(t)
 
 	csv := csvHeader +
@@ -58,7 +57,7 @@ func TestCSVImportFlow(t *testing.T) {
 		t.Error("child wording in family preview")
 	}
 	token := tokenFrom(t, body)
-	if tot, _ := st.Totals(ctx); tot.Children != 0 {
+	if tot := totals(t, st); tot.Children != 0 {
 		t.Fatalf("saved before confirm: %+v", tot)
 	}
 
@@ -66,7 +65,7 @@ func TestCSVImportFlow(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("confirm = %d: %s", rec.Code, rec.Body)
 	}
-	tot, _ := st.Totals(ctx)
+	tot := totals(t, st)
 	if tot.Children != 3 || tot.Parents != 1 || tot.Families != 3 {
 		t.Fatalf("totals = %+v", tot)
 	}
@@ -135,7 +134,7 @@ func TestCSVUploadExtensions(t *testing.T) {
 
 func uploadLang(t *testing.T, s *Server, name string, content []byte, lang string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := uploadRequest(t, name, content)
+	req := uploadRequest(t, name, content, importTargetFields(t, s))
 	req.Host = "127.0.0.1:8080"
 	req.Header.Set("Accept-Language", lang)
 	rec := httptest.NewRecorder()
@@ -169,7 +168,7 @@ func TestCSVUploadErrors(t *testing.T) {
 			}
 		})
 	}
-	if tot, _ := st.Totals(context.Background()); tot.Children != 0 {
+	if tot := totals(t, st); tot.Children != 0 {
 		t.Errorf("data saved: %+v", tot)
 	}
 
@@ -191,7 +190,7 @@ func TestCSVWarningsOnlyCanBeConfirmed(t *testing.T) {
 	if rec := confirm(s, token); rec.Code != http.StatusSeeOther {
 		t.Fatalf("confirm = %d", rec.Code)
 	}
-	tot, _ := st.Totals(context.Background())
+	tot := totals(t, st)
 	if tot.Children != 2 || tot.Parents != 0 {
 		t.Errorf("totals = %+v", tot)
 	}
@@ -277,11 +276,11 @@ func TestCSVOverExcelReplacesData(t *testing.T) {
 
 	rec := upload(t, s, "b.csv", []byte(csvHeader+"10;F;DUPONT;marie@example.fr\n"))
 	confirm(s, tokenFrom(t, rec.Body.String()))
-	tot, _ := st.Totals(ctx)
+	tot := totals(t, st)
 	if tot.Children != 1 || tot.Parents != 1 || tot.Families != 1 {
 		t.Fatalf("totals = %+v", tot)
 	}
-	cs, _ := st.Children(ctx)
+	cs, _ := st.Children(ctx, mainList(t, st))
 	if len(cs) != 1 || cs[0].Name != "DUPONT" || cs[0].FamilyNumber != "10" {
 		t.Errorf("children = %+v", cs)
 	}
@@ -307,7 +306,7 @@ func TestCSVTooManyColumns(t *testing.T) {
 			}
 		})
 	}
-	if tot, _ := st.Totals(context.Background()); tot.Children != 0 {
+	if tot := totals(t, st); tot.Children != 0 {
 		t.Errorf("data saved: %+v", tot)
 	}
 }

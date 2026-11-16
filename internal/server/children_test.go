@@ -14,11 +14,47 @@ import (
 	"cafeteria-management/internal/store"
 )
 
-func seed(t *testing.T, st *store.Store, rows []store.ImportRow) {
+// mainList returns the ID of the first list (by name), or 0 if there is none.
+func mainList(t *testing.T, st *store.Store) int64 {
 	t.Helper()
-	if _, err := st.ImportFamilies(context.Background(), store.ImportRequest{FileName: "a.xlsx", RowsRead: len(rows), Rows: rows}); err != nil {
+	ls, err := st.Lists(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
+	if len(ls) == 0 {
+		return 0
+	}
+	return ls[0].ID
+}
+
+// target aims an import at the first list, or at a new list "Cantine" when
+// there is none, so single-list tests read as before.
+func target(t *testing.T, st *store.Store, req store.ImportRequest) store.ImportRequest {
+	t.Helper()
+	if id := mainList(t, st); id != 0 {
+		req.ListID = id
+	} else {
+		req.NewListName = "Cantine"
+	}
+	return req
+}
+
+// seed imports rows into the first list (created as "Cantine" if needed).
+func seed(t *testing.T, st *store.Store, rows []store.ImportRow) {
+	t.Helper()
+	if _, err := st.ImportFamilies(context.Background(), target(t, st, store.ImportRequest{FileName: "a.xlsx", RowsRead: len(rows), Rows: rows})); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// seedList creates a list called name from rows and returns its ID.
+func seedList(t *testing.T, st *store.Store, name string, rows []store.ImportRow) int64 {
+	t.Helper()
+	sum, err := st.ImportFamilies(context.Background(), store.ImportRequest{FileName: name + ".xlsx", RowsRead: len(rows), Rows: rows, NewListName: name})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sum.ListID
 }
 
 // threeChildren: 3 children, 2 parents.
@@ -36,7 +72,7 @@ func postCompose(s *Server, body string) *httptest.ResponseRecorder {
 
 func childIDs(t *testing.T, st *store.Store) map[string]int64 {
 	t.Helper()
-	cs, err := st.Children(context.Background())
+	cs, err := st.Children(context.Background(), mainList(t, st))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,25 +91,37 @@ func form(ids ...any) string {
 	return v.Encode()
 }
 
-// currentVersion returns the data version the /children form would carry.
+// currentVersion returns the version of the first list, as the /children
+// form would carry it.
 func currentVersion(t *testing.T, st *store.Store) int64 {
 	t.Helper()
-	v, err := st.DataVersion(context.Background())
+	v, err := st.ListVersion(context.Background(), mainList(t, st))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return v
 }
 
-// formAt is form plus the hidden version field.
-func formAt(version int64, ids ...any) string {
-	return form(ids...) + "&version=" + fmt.Sprint(version)
+// formAt is form plus the hidden list and version fields.
+func formAt(listID, version int64, ids ...any) string {
+	return form(ids...) + "&" + listQS(listID, version)
 }
 
-// formV is form with the current data version.
+// listQS is the hidden list and version fields as a query string.
+func listQS(listID, version int64) string {
+	return fmt.Sprintf("list=%d&version=%d", listID, version)
+}
+
+// currentQS is listQS for the first list at its current version.
+func currentQS(t *testing.T, st *store.Store) string {
+	t.Helper()
+	return listQS(mainList(t, st), currentVersion(t, st))
+}
+
+// formV is form with the first list and its current version.
 func formV(t *testing.T, st *store.Store, ids ...any) string {
 	t.Helper()
-	return formAt(currentVersion(t, st), ids...)
+	return form(ids...) + "&" + currentQS(t, st)
 }
 
 // manyIDs builds a form body with n distinct positive IDs.
@@ -163,12 +211,13 @@ func TestChildrenPage(t *testing.T) {
 
 	t.Run("nav and home link", func(t *testing.T) {
 		s, st := newTestServer(t)
-		if body := do(s, httptest.NewRequest(http.MethodGet, "/", nil)).Body.String(); strings.Contains(body, `class="button" href="/children"`) {
+		if body := do(s, httptest.NewRequest(http.MethodGet, "/", nil)).Body.String(); strings.Contains(body, `href="/children?list=`) {
 			t.Error("home links to /children with an empty database")
 		}
 		seed(t, st, threeChildren)
-		if body := do(s, httptest.NewRequest(http.MethodGet, "/", nil)).Body.String(); !strings.Contains(body, `class="button" href="/children"`) {
-			t.Error("home has no link to /children")
+		want := fmt.Sprintf(`href="/children?list=%d"`, mainList(t, st))
+		if body := do(s, httptest.NewRequest(http.MethodGet, "/", nil)).Body.String(); !strings.Contains(body, want) {
+			t.Errorf("home has no link %s to the list", want)
 		}
 	})
 }
@@ -215,7 +264,7 @@ func TestCompose(t *testing.T) {
 		stale := currentVersion(t, st)
 		// Second import removes Léa (and Bob) between list and compose.
 		seed(t, st, threeChildren[:2])
-		rec := postCompose(s, formAt(stale, ids["Zoé"], ids["Léa"]))
+		rec := postCompose(s, formAt(mainList(t, st), stale, ids["Zoé"], ids["Léa"]))
 		if rec.Code != http.StatusConflict {
 			t.Fatalf("status = %d, want 409", rec.Code)
 		}
@@ -237,7 +286,7 @@ func TestCompose(t *testing.T) {
 		ids := childIDs(t, st)
 		stale := currentVersion(t, st)
 		seed(t, st, threeChildren[:2])
-		req := httptest.NewRequest(http.MethodPost, "/compose", strings.NewReader(formAt(stale, ids["Zoé"], ids["Léa"])))
+		req := httptest.NewRequest(http.MethodPost, "/compose", strings.NewReader(formAt(mainList(t, st), stale, ids["Zoé"], ids["Léa"])))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Host = "127.0.0.1:8080"
 		req.Header.Set("Accept-Language", "en")
@@ -254,6 +303,7 @@ func TestCompose(t *testing.T) {
 		for name, body := range map[string]string{
 			"no field":                "",
 			"version only":            "version=1",
+			"list and version only":   "list=1&version=1",
 			"invalid":                 formV(t, st, "abc", -1, 0),
 			"unknown id":              formV(t, st, fakeID),
 			"invalid without version": form("abc", -1, 0),
@@ -362,7 +412,7 @@ func TestCompose(t *testing.T) {
 		seed(t, st, threeChildren)
 		// IDs 1..5000 include the three real rows: the request passes the
 		// limit and the version check.
-		rec := postCompose(s, manyIDs(maxSelectedChildren)+"&version="+fmt.Sprint(currentVersion(t, st)))
+		rec := postCompose(s, manyIDs(maxSelectedChildren)+"&"+currentQS(t, st))
 		if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "Trop d") {
 			t.Fatalf("status = %d, want 200 without too_many", rec.Code)
 		}
@@ -377,6 +427,7 @@ func TestCompose(t *testing.T) {
 			v.Add("child", "abc")
 		}
 		v.Set("version", fmt.Sprint(currentVersion(t, st)))
+		v.Set("list", fmt.Sprint(mainList(t, st)))
 		rec := postCompose(s, v.Encode())
 		if rec.Code == http.StatusInternalServerError || strings.Contains(rec.Body.String(), "Trop d") {
 			t.Fatalf("status = %d, duplicates/invalid must not trigger too_many", rec.Code)
@@ -627,12 +678,12 @@ func TestHomeFamilyStats(t *testing.T) {
 		{ParentName: "A", ChildName: "A", Email: "b@example.com", FamilyNumber: "10"},
 	})
 	body := do(s, httptest.NewRequest(http.MethodGet, "/", nil)).Body.String()
-	for _, want := range []string{"Familles", "Adresses email", "Choisir des familles"} {
+	for _, want := range []string{"1 Familles", "2 Adresses email", "Choisir"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("home does not contain %q", want)
 		}
 	}
-	if strings.Contains(body, "Choisir des enfants") {
-		t.Error("child button with family data")
+	if strings.Contains(body, "Enfants</td>") || strings.Contains(body, "Parents</td>") {
+		t.Error("child labels with family data")
 	}
 }

@@ -1,13 +1,15 @@
 {{define "title"}}{{.L.T "compose.title"}}{{end}}
 {{define "content"}}{{$L := .L}}{{with .Data}}
 <h1>{{$L.T "compose.title"}}</h1>
+<p class="muted">{{$L.T "compose.list" .ListName}}</p>
 
 {{range .Errors}}<div class="alert alert-error" role="alert">{{.}}</div>{{end}}
 {{if .Notice}}<div class="alert alert-success" role="status">{{.Notice}}</div>{{end}}
 
-<p class="actions actions-top"><a class="button button-secondary" href="/children">{{$L.T "compose.back"}}</a></p>
+<p class="actions actions-top"><a class="button button-secondary" href="/children?list={{.ListID}}">{{$L.T "compose.back"}}</a></p>
 
 <form method="post" action="/compose" class="compose">
+  <input type="hidden" name="list" value="{{.ListID}}">
   <input type="hidden" name="version" value="{{.Version}}">
   {{range .IDs}}<input type="hidden" name="child" value="{{.}}">{{end}}
   <button type="submit" name="action" value="preview" class="visually-hidden" tabindex="-1" aria-hidden="true">{{$L.T "compose.preview_button"}}</button>
@@ -106,5 +108,5 @@
 
   <p class="note">{{$L.T "compose.next_step"}}</p>
 </form>
-<p class="actions"><a class="button button-secondary" href="/children">{{$L.T "compose.back"}}</a></p>
+<p class="actions"><a class="button button-secondary" href="/children?list={{.ListID}}">{{$L.T "compose.back"}}</a></p>
 {{end}}{{end}}

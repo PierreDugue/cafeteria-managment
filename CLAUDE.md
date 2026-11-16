@@ -13,8 +13,9 @@ decision changes.
 Done: SQLite storage with migrations, Excel import with preview (SPEC §4.1),
 minimal FR/EN i18n, child list and selection (§4.2), CSV import of the
 families software export (§4.1.1, plan `docs/plans/002-csv-import.md`),
-email composition with templates and preview (§4.3, plan 003).
-Next: sending (§4.4); read the "Notes for §4.4" in plan 003 first. See the milestones in `docs/SPEC.md` §11.
+email composition with templates and preview (§4.3, plan 003), named
+family lists (§4.0, plan 004). Next: sending (§4.4), reading the
+"Notes for §4.4" in plan 003 first. See the milestones in `docs/SPEC.md` §11.
 
 ## Commands
 
@@ -56,9 +57,12 @@ docs/plans/        one design plan per feature (written by archi)
   in `internal/`, plain forms, no popups or new tabs.
 - UI text in French and English through `web/locales/*.json`, never
   hard-coded. Add every new key to both files.
-- Excel import: the file is the source of truth. One transaction, saved only
-  after the user confirms the preview; entries missing from the file are
-  deleted; email history is never affected (SPEC §4.1).
+- Excel import: the file is the source of truth for the chosen list. Each
+  import creates a new list or replaces the chosen list only (other lists
+  are never touched; replacing needs an explicit, server-checked
+  confirmation). One transaction, saved only after the user confirms the
+  preview; entries of that list missing from the file are deleted; email
+  history is never affected (SPEC §4.0, §4.1).
 - Children's data is personal: no names/emails in info logs, secrets in the
   OS keychain only.
 

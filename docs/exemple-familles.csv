@@ -2,3 +2,4 @@ NUMFAM;NUMFACFACT;NOMFACT;;;;;;;;;;;NOM RL1;PRENOM RL1;;PORT RL1;EMAIL RL1;NOM R
 1001;F1001;DUGUE Pierre;;;;;;;;;;;DUGUE;Pierre;;0600000001;marie.dupont@example.com;DUPONT;Jean;;0600000002;jean.dupont@example.com;;;;0600000001;pierre.dugue1@gmail.com
 1001;F1001;DUGUE Pierre;;;;;;;;;;;DUGUE;Toto;;0600000001;marie.dupont@example.com;DUPONT;Jean;;0600000002;jean.dupont@example.com;;;;0600000001;pierre.dugue1@gmail.com
 1002;F1001;SMITH Agent;;;;;;;;;;;SMITH;Toto;;0600000001;marie.dupont@example.com;DUPONT;Jean;;0600000002;jean.dupont@example.com;;;;0600000001;pilou_seph@hotmail.com
+1003;F1001;SMITH Agent;;;;;;;;;;;SMITH;Toto;;0600000001;marie.dupont@example.com;DUPONT;Jean;;0600000002;jean.dupont@example.com;;;;0600000001;test@gmail.com

@@ -29,6 +29,8 @@ type recipientRow struct {
 }
 
 type composeData struct {
+	ListID       int64
+	ListName     string // shown only
 	Version      int64
 	IDs          []int64
 	Families     bool // family entries (CSV export), not children
@@ -50,40 +52,47 @@ type composeData struct {
 
 // handleCompose shows the message form for the selected children and
 // handles its buttons (load a template, preview, save as template). The
-// selection travels in the form with the data version (SPEC §4.2, §4.3).
+// selection travels in the form with its list and the list version (SPEC
+// §4.0, §4.2, §4.3).
 func (s *Server) handleCompose(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxComposeBytes)
 	loc := s.localizer(r)
+	// listID stays 0 (the default list) until the form is read and valid:
+	// error pages then show the posted list, or else the default one.
+	var listID int64
 	if err := r.ParseForm(); err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
-			s.renderChildren(w, r, http.StatusUnprocessableEntity, loc.T("children.error.too_large"))
+			s.renderChildren(w, r, http.StatusUnprocessableEntity, listID, loc.T("children.error.too_large"))
 			return
 		}
 		slog.Warn("compose: parse form", "err", err)
-		s.renderChildren(w, r, http.StatusUnprocessableEntity, loc.T("children.error.none_selected"))
+		s.renderChildren(w, r, http.StatusUnprocessableEntity, listID, loc.T("children.error.none_selected"))
 		return
 	}
 
+	if id, err := strconv.ParseInt(r.PostForm.Get("list"), 10, 64); err == nil && id > 0 {
+		listID = id
+	}
 	ids := parseIDs(r.PostForm["child"])
 	if len(ids) > maxSelectedChildren {
-		s.renderChildren(w, r, http.StatusUnprocessableEntity, loc.T("children.error.too_many", maxSelectedChildren))
+		s.renderChildren(w, r, http.StatusUnprocessableEntity, listID, loc.T("children.error.too_many", maxSelectedChildren))
 		return
 	}
 	if len(ids) == 0 {
-		s.renderChildren(w, r, http.StatusUnprocessableEntity, loc.T("children.error.none_selected"))
+		s.renderChildren(w, r, http.StatusUnprocessableEntity, listID, loc.T("children.error.none_selected"))
 		return
 	}
 
-	// A missing or invalid version is as stale as an old one.
+	// A missing or invalid list or version is as stale as an old one.
 	version, err := strconv.ParseInt(r.PostForm.Get("version"), 10, 64)
-	if err != nil || version < 0 {
-		s.renderChildren(w, r, http.StatusConflict, loc.T("compose.error.stale"))
+	if listID == 0 || err != nil || version < 0 {
+		s.renderChildren(w, r, http.StatusConflict, listID, loc.T("compose.error.stale"))
 		return
 	}
-	children, err := s.store.SelectedChildren(r.Context(), version, ids)
+	children, err := s.store.SelectedChildren(r.Context(), listID, version, ids)
 	if errors.Is(err, store.ErrStaleSelection) {
-		s.renderChildren(w, r, http.StatusConflict, loc.T("compose.error.stale"))
+		s.renderChildren(w, r, http.StatusConflict, listID, loc.T("compose.error.stale"))
 		return
 	}
 	if err != nil {
@@ -91,21 +100,21 @@ func (s *Server) handleCompose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(children) == 0 {
-		s.renderChildren(w, r, http.StatusUnprocessableEntity, loc.T("children.error.none_selected"))
+		s.renderChildren(w, r, http.StatusUnprocessableEntity, listID, loc.T("children.error.none_selected"))
 		return
 	}
 	for _, c := range children {
 		// Only a tampered form can post such an ID: refuse the whole request.
 		if !c.CanEmail() {
 			slog.Warn("compose: entry without a valid email selected", "id", c.ID)
-			s.renderChildren(w, r, http.StatusUnprocessableEntity, loc.T("children.error.no_email"))
+			s.renderChildren(w, r, http.StatusUnprocessableEntity, listID, loc.T("children.error.no_email"))
 			return
 		}
 	}
 
 	// Remembered for the next visit of the list. A failure must not block
 	// the user: the selection is only a convenience.
-	if err := s.store.SaveSelection(r.Context(), entryIDs(children)); err != nil {
+	if err := s.store.SaveSelection(r.Context(), listID, entryIDs(children)); err != nil {
 		slog.Warn("compose: save selection", "err", err)
 	}
 
@@ -113,14 +122,26 @@ func (s *Server) handleCompose(w http.ResponseWriter, r *http.Request) {
 	mode := message.ModeOf(group)
 	subject, body := message.Normalize(r.PostForm.Get("subject"), r.PostForm.Get("body"))
 
+	list, err := s.store.List(r.Context(), listID)
+	if errors.Is(err, store.ErrNotFound) { // deleted just now
+		s.renderChildren(w, r, http.StatusConflict, listID, loc.T("compose.error.stale"))
+		return
+	}
+	if err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+
 	data := composeData{
+		ListID:       listID,
+		ListName:     list.Name,
 		Version:      version,
 		Families:     mode == message.FamilyMode,
 		Recipients:   recipientRows(group, mode),
 		Placeholders: placeholderViews(loc, mode),
 		MaxSubject:   message.MaxSubjectLen,
 		MaxBody:      message.MaxBodyLen,
-		MaxName:      maxTemplateNameLen,
+		MaxName:      maxNameLen,
 	}
 	data.IDs = entryIDs(children)
 	if id, err := strconv.ParseInt(r.PostForm.Get("preview_to"), 10, 64); err == nil {

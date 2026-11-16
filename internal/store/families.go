@@ -55,32 +55,50 @@ type ImportRequest struct {
 	Rows     []ImportRow
 	// DryRun computes the changes and saves nothing.
 	DryRun bool
+	// Exactly one of ListID (replace that list, ErrNotFound if it is gone)
+	// and NewListName (create the list; ErrNameTaken if the name is used)
+	// must be set (SPEC §4.0). Other lists are never touched.
+	ListID      int64
+	NewListName string
 	// Base, if set, must equal the Base of the preview's summary: the import
-	// fails with ErrStaleImport if another import happened in between, so it
-	// does exactly what the preview showed.
+	// fails with ErrStaleImport if another import into the list happened in
+	// between, so it does exactly what the preview showed. It applies to
+	// ListID only (a new list has no version).
 	Base *int64
 }
 
 // ImportSummary is the result of ImportFamilies.
 type ImportSummary struct {
-	ImportID        int64 // 0 for a dry run
-	Base            int64 // last import ID before this one (0 if none)
+	ImportID        int64  // 0 for a dry run
+	Base            int64  // last import ID of the list before this one (0 if none)
+	ListID          int64  // the list created or replaced (0 for a dry run of a new list)
+	ListName        string // its cleaned name
 	Parents         Changes
 	Children        Changes
 	DeletedChildren []DeletedChild // sorted by child name
 }
 
-// ImportFamilies replaces all parents and children with rows (SPEC §4.1):
-// matching records are updated, new ones added, the others deleted.
+// ImportFamilies replaces the parents and children of one list with rows
+// (SPEC §4.0, §4.1): matching records are updated, new ones added, the
+// others deleted. Only the target list is read or changed.
 // Parents match on email, children on parent + normalized name, family
 // entries on parent + family number (family number alone without a valid
 // email).
 //
-// Everything runs in one transaction. A dry run computes the changes the
-// same way and then rolls back, so a preview matches the real import.
-// The import history is only written by a real import.
+// Everything runs in one transaction, including the creation of a new list.
+// A dry run computes the changes the same way and then rolls back, so a
+// preview matches the real import. The import history is only written by a
+// real import.
 func (s *Store) ImportFamilies(ctx context.Context, req ImportRequest) (ImportSummary, error) {
 	var sum ImportSummary
+
+	if (req.ListID != 0) == (req.NewListName != "") {
+		return sum, errors.New("import: exactly one of ListID and NewListName must be set")
+	}
+	newName := textnorm.Clean(req.NewListName)
+	if req.ListID == 0 && newName == "" {
+		return sum, errors.New("import: empty new list name")
+	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -88,25 +106,51 @@ func (s *Store) ImportFamilies(ctx context.Context, req ImportRequest) (ImportSu
 	}
 	defer tx.Rollback()
 
-	// Data only changes through imports, so the last import ID identifies
-	// the state the changes are computed from.
-	if sum.Base, err = lastImportID(ctx, tx); err != nil {
-		return sum, err
-	}
-	if req.Base != nil && *req.Base != sum.Base {
-		return sum, ErrStaleImport
-	}
-
-	parents, err := loadParents(ctx, tx)
-	if err != nil {
-		return sum, err
-	}
-	children, err := loadChildren(ctx, tx)
-	if err != nil {
-		return sum, err
-	}
-
 	now := s.timestamp()
+	listID := req.ListID
+	var parents map[string]*parentRec
+	var children map[childKey]*childRec
+	if listID != 0 {
+		// Data only changes through imports, so the list's last import ID
+		// identifies the state the changes are computed from.
+		if sum.Base, err = listVersion(ctx, tx, listID); err != nil {
+			return sum, err
+		}
+		if req.Base != nil && *req.Base != sum.Base {
+			return sum, ErrStaleImport
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT name FROM lists WHERE id = ?`, listID).Scan(&sum.ListName); err != nil {
+			return sum, fmt.Errorf("read list name: %w", err)
+		}
+		if parents, err = loadParents(ctx, tx, listID); err != nil {
+			return sum, err
+		}
+		if children, err = loadChildren(ctx, tx, listID); err != nil {
+			return sum, err
+		}
+	} else {
+		// Created inside the transaction so that the name is checked at the
+		// moment of saving; a dry run rolls it back.
+		key := textnorm.Key(newName)
+		if err := checkNameFree(ctx, tx, listNameQuery, key, 0); err != nil {
+			return sum, err
+		}
+		res, err := tx.ExecContext(ctx,
+			`INSERT INTO lists (name, name_key, created_at, updated_at, used_at) VALUES (?, ?, ?, ?, ?)`,
+			newName, key, now, now, now)
+		if err != nil {
+			return sum, fmt.Errorf("insert list: %w", err)
+		}
+		if listID, err = res.LastInsertId(); err != nil {
+			return sum, err
+		}
+		sum.ListName = newName
+		parents, children = map[string]*parentRec{}, map[childKey]*childRec{}
+	}
+	if req.ListID != 0 || !req.DryRun {
+		sum.ListID = listID // not for a dry run of a new list: it is rolled back
+	}
+
 	keptParents := map[int64]bool{}
 	keptChildren := map[int64]bool{}
 
@@ -122,8 +166,8 @@ func (s *Store) ImportFamilies(ctx context.Context, req ImportRequest) (ImportSu
 			switch {
 			case !ok:
 				res, err := tx.ExecContext(ctx,
-					`INSERT INTO parents (name, email, created_at, updated_at) VALUES (?, ?, ?, ?)`,
-					r.ParentName, r.Email, now, now)
+					`INSERT INTO parents (list_id, name, email, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
+					listID, r.ParentName, r.Email, now, now)
 				if err != nil {
 					return sum, fmt.Errorf("insert parent: %w", err)
 				}
@@ -166,9 +210,9 @@ func (s *Store) ImportFamilies(ctx context.Context, req ImportRequest) (ImportSu
 				dbParent = sql.NullInt64{Int64: parentID, Valid: true}
 			}
 			res, err := tx.ExecContext(ctx,
-				`INSERT INTO children (parent_id, family_number, name, name_key, invalid_email, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?)`,
-				dbParent, r.FamilyNumber, r.ChildName, nameKey, r.InvalidEmail, now, now)
+				`INSERT INTO children (list_id, parent_id, family_number, name, name_key, invalid_email, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+				listID, dbParent, r.FamilyNumber, r.ChildName, nameKey, r.InvalidEmail, now, now)
 			if err != nil {
 				return sum, fmt.Errorf("insert child: %w", err)
 			}
@@ -239,13 +283,16 @@ func (s *Store) ImportFamilies(ctx context.Context, req ImportRequest) (ImportSu
 		return sum, nil // deferred Rollback discards everything
 	}
 
+	if _, err := tx.ExecContext(ctx, `UPDATE lists SET updated_at = ?, used_at = ? WHERE id = ?`, now, now, listID); err != nil {
+		return sum, fmt.Errorf("update list: %w", err)
+	}
 	res, err := tx.ExecContext(ctx, `INSERT INTO imports (file_name, imported_at, rows_read,
 		parents_added, parents_updated, parents_deleted,
-		children_added, children_updated, children_deleted)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		children_added, children_updated, children_deleted, list_id, list_name)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		req.FileName, now, req.RowsRead,
 		sum.Parents.Added, sum.Parents.Updated, sum.Parents.Deleted,
-		sum.Children.Added, sum.Children.Updated, sum.Children.Deleted)
+		sum.Children.Added, sum.Children.Updated, sum.Children.Deleted, listID, sum.ListName)
 	if err != nil {
 		return sum, fmt.Errorf("record import: %w", err)
 	}
@@ -279,8 +326,8 @@ type childRec struct {
 	invalidEmail string
 }
 
-func loadParents(ctx context.Context, tx *sql.Tx) (map[string]*parentRec, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT id, name, email FROM parents`)
+func loadParents(ctx context.Context, tx *sql.Tx, listID int64) (map[string]*parentRec, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id, name, email FROM parents WHERE list_id = ?`, listID)
 	if err != nil {
 		return nil, fmt.Errorf("load parents: %w", err)
 	}
@@ -297,8 +344,8 @@ func loadParents(ctx context.Context, tx *sql.Tx) (map[string]*parentRec, error)
 	return out, rows.Err()
 }
 
-func loadChildren(ctx context.Context, tx *sql.Tx) (map[childKey]*childRec, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT id, parent_id, family_number, name, name_key, invalid_email FROM children`)
+func loadChildren(ctx context.Context, tx *sql.Tx, listID int64) (map[childKey]*childRec, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id, parent_id, family_number, name, name_key, invalid_email FROM children WHERE list_id = ?`, listID)
 	if err != nil {
 		return nil, fmt.Errorf("load children: %w", err)
 	}
@@ -322,26 +369,6 @@ func loadChildren(ctx context.Context, tx *sql.Tx) (map[childKey]*childRec, erro
 	return out, rows.Err()
 }
 
-// Totals is the number of records currently stored.
-type Totals struct {
-	Parents  int
-	Children int
-	Families int // distinct family numbers (0 for Excel data)
-}
-
-// Totals counts parents and children.
-func (s *Store) Totals(ctx context.Context) (Totals, error) {
-	var t Totals
-	err := s.db.QueryRowContext(ctx,
-		`SELECT (SELECT COUNT(*) FROM parents), (SELECT COUNT(*) FROM children),
-		(SELECT COUNT(DISTINCT family_number) FROM children WHERE family_number <> '')`).
-		Scan(&t.Parents, &t.Children, &t.Families)
-	if err != nil {
-		return t, fmt.Errorf("count families: %w", err)
-	}
-	return t, nil
-}
-
 // ImportRecord is one entry of the import history.
 type ImportRecord struct {
 	ID         int64
@@ -350,14 +377,20 @@ type ImportRecord struct {
 	RowsRead   int
 	Parents    Changes // Unchanged is not stored
 	Children   Changes
+	// The list the import went into: ListID is 0 if it has been deleted
+	// since, and ListName is then the name at import time.
+	ListID      int64
+	ListName    string // current name of a live list
+	ListDeleted bool
 }
 
 // Imports returns the most recent imports first, at most limit.
 func (s *Store) Imports(ctx context.Context, limit int) ([]ImportRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, file_name, imported_at, rows_read,
-		parents_added, parents_updated, parents_deleted,
-		children_added, children_updated, children_deleted
-		FROM imports ORDER BY id DESC LIMIT ?`, limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT i.id, i.file_name, i.imported_at, i.rows_read,
+		i.parents_added, i.parents_updated, i.parents_deleted,
+		i.children_added, i.children_updated, i.children_deleted,
+		COALESCE(l.id, 0), COALESCE(l.name, i.list_name), l.id IS NULL
+		FROM imports i LEFT JOIN lists l ON l.id = i.list_id ORDER BY i.id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list imports: %w", err)
 	}
@@ -369,7 +402,8 @@ func (s *Store) Imports(ctx context.Context, limit int) ([]ImportRecord, error) 
 		var at string
 		if err := rows.Scan(&r.ID, &r.FileName, &at, &r.RowsRead,
 			&r.Parents.Added, &r.Parents.Updated, &r.Parents.Deleted,
-			&r.Children.Added, &r.Children.Updated, &r.Children.Deleted); err != nil {
+			&r.Children.Added, &r.Children.Updated, &r.Children.Deleted,
+			&r.ListID, &r.ListName, &r.ListDeleted); err != nil {
 			return nil, err
 		}
 		r.ImportedAt = parseTime(at)

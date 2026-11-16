@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -19,7 +20,16 @@ import (
 
 func newTestServer(t *testing.T) (*Server, *store.Store) {
 	t.Helper()
-	st, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "app.db"))
+	s, st, _ := newTestServerAt(t)
+	return s, st
+}
+
+// newTestServerAt is newTestServer that also returns the database path, for
+// tests that need to set timestamps by hand (see setUsedAt).
+func newTestServerAt(t *testing.T) (*Server, *store.Store, string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "app.db")
+	st, err := store.Open(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +39,7 @@ func newTestServer(t *testing.T) (*Server, *store.Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return s, st
+	return s, st, path
 }
 
 // do sends a request as the local browser would.
@@ -39,6 +49,20 @@ func do(s *Server, req *http.Request) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
 	s.ServeHTTP(rec, req)
 	return rec
+}
+
+// totals returns the counts of the first list (zero value if none).
+func totals(t *testing.T, st *store.Store) store.List {
+	t.Helper()
+	id := mainList(t, st)
+	if id == 0 {
+		return store.List{}
+	}
+	l, err := st.List(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return l
 }
 
 func TestRoutes(t *testing.T) {
@@ -105,7 +129,6 @@ func TestRejectsForeignRequests(t *testing.T) {
 
 func TestImportFlow(t *testing.T) {
 	s, st := newTestServer(t)
-	ctx := context.Background()
 
 	// First import.
 	rec := upload(t, s, "familles.xlsx", xlsx(t, [][]any{
@@ -120,7 +143,7 @@ func TestImportFlow(t *testing.T) {
 	token := tokenFrom(t, rec.Body.String())
 
 	// Nothing saved before confirmation.
-	if tot, _ := st.Totals(ctx); tot.Children != 0 {
+	if tot := totals(t, st); tot.Children != 0 {
 		t.Fatalf("saved before confirm: %+v", tot)
 	}
 
@@ -128,7 +151,7 @@ func TestImportFlow(t *testing.T) {
 	if rec.Code != http.StatusSeeOther || !strings.HasPrefix(rec.Header().Get("Location"), "/import?done=") {
 		t.Fatalf("confirm = %d %q", rec.Code, rec.Header().Get("Location"))
 	}
-	if tot, _ := st.Totals(ctx); tot.Children != 3 || tot.Parents != 2 {
+	if tot := totals(t, st); tot.Children != 3 || tot.Parents != 2 {
 		t.Fatalf("totals = %+v", tot)
 	}
 
@@ -154,7 +177,7 @@ func TestImportFlow(t *testing.T) {
 		}
 	}
 	confirm(s, tokenFrom(t, body))
-	if tot, _ := st.Totals(ctx); tot.Children != 1 || tot.Parents != 1 {
+	if tot := totals(t, st); tot.Children != 1 || tot.Parents != 1 {
 		t.Fatalf("totals after second import = %+v", tot)
 	}
 }
@@ -164,6 +187,7 @@ func TestImportFlow(t *testing.T) {
 func TestImportStalePreview(t *testing.T) {
 	s, st := newTestServer(t)
 	header := []any{"Nom parent", "Nom enfant", "Adresse email"}
+	seed(t, st, []store.ImportRow{{ParentName: "Old", ChildName: "Old", Email: "old@example.fr"}}) // the list both previews replace
 
 	tokenA := tokenFrom(t, upload(t, s, "a.xlsx", xlsx(t, [][]any{header, {"Marie", "Léa", "marie@example.fr"}})).Body.String())
 	tokenB := tokenFrom(t, upload(t, s, "b.xlsx", xlsx(t, [][]any{header, {"Paul", "Zoé", "paul@example.fr"}})).Body.String())
@@ -180,7 +204,7 @@ func TestImportStalePreview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(imports) != 1 || imports[0].FileName != "b.xlsx" {
+	if len(imports) != 2 || imports[0].FileName != "b.xlsx" {
 		t.Fatalf("imports = %+v", imports)
 	}
 }
@@ -234,37 +258,77 @@ func TestImportRejected(t *testing.T) {
 		})
 	}
 
-	if tot, _ := st.Totals(context.Background()); tot.Children != 0 {
+	if tot := totals(t, st); tot.Children != 0 {
 		t.Errorf("rejected files saved data: %+v", tot)
 	}
 }
 
-func upload(t *testing.T, s *Server, name string, content []byte) *httptest.ResponseRecorder {
+// importTargetFields are the form fields of the default import target: the
+// first list if there is one, else a new list "Cantine".
+func importTargetFields(t *testing.T, s *Server) url.Values {
 	t.Helper()
-	return do(s, uploadRequest(t, name, content))
+	if id := mainList(t, s.store); id != 0 {
+		return url.Values{"list": {fmt.Sprint(id)}}
+	}
+	return url.Values{"list": {newListChoice}, "list_name": {"Cantine"}}
 }
 
-func uploadRequest(t *testing.T, name string, content []byte) *http.Request {
+// upload previews a file into the default target (see importTargetFields).
+func upload(t *testing.T, s *Server, name string, content []byte) *httptest.ResponseRecorder {
+	t.Helper()
+	return do(s, uploadRequest(t, name, content, importTargetFields(t, s)))
+}
+
+// uploadTo previews a file with the given target fields (list, list_name).
+func uploadTo(t *testing.T, s *Server, name string, content []byte, fields url.Values) *httptest.ResponseRecorder {
+	t.Helper()
+	return do(s, uploadRequest(t, name, content, fields))
+}
+
+// uploadRequest builds the multipart request of /import/preview.
+func uploadRequest(t *testing.T, name string, content []byte, fields url.Values) *http.Request {
+	t.Helper()
+	return multipartRequest(t, "/import/preview", fields, name, content)
+}
+
+// multipartRequest builds a multipart POST with the given fields and, if
+// fileName is not empty, a "file" part.
+func multipartRequest(t *testing.T, path string, fields url.Values, fileName string, content []byte) *http.Request {
 	t.Helper()
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
-	fw, err := mw.CreateFormFile("file", name)
-	if err != nil {
-		t.Fatal(err)
+	for k, vs := range fields {
+		for _, v := range vs {
+			if err := mw.WriteField(k, v); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
-	if _, err := fw.Write(content); err != nil {
-		t.Fatal(err)
+	if fileName != "" {
+		fw, err := mw.CreateFormFile("file", fileName)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fw.Write(content); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := mw.Close(); err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/import/preview", &body)
+	req := httptest.NewRequest(http.MethodPost, path, &body)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	return req
 }
 
+// confirm confirms a pending import, ticking the replacement checkbox (the
+// server ignores it for a new list).
 func confirm(s *Server, token string) *httptest.ResponseRecorder {
-	form := url.Values{"token": {token}}
+	return confirmWith(s, url.Values{"token": {token}, "confirm_replace": {"1"}})
+}
+
+// confirmWith posts exactly the given confirmation form.
+func confirmWith(s *Server, form url.Values) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodPost, "/import/confirm", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	return do(s, req)

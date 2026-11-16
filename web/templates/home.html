@@ -2,24 +2,49 @@
 {{define "content"}}{{$L := .L}}{{with .Data}}
 <h1>{{$L.T "home.title"}}</h1>
 
-<div class="stats">
-  {{if .Totals.Families}}
-  <div class="stat"><span class="stat-value">{{.Totals.Families}}</span><span class="stat-label">{{$L.T "common.families"}}</span></div>
-  <div class="stat"><span class="stat-value">{{.Totals.Parents}}</span><span class="stat-label">{{$L.T "common.emails"}}</span></div>
-  {{else}}
-  <div class="stat"><span class="stat-value">{{.Totals.Children}}</span><span class="stat-label">{{$L.T "common.children"}}</span></div>
-  <div class="stat"><span class="stat-value">{{.Totals.Parents}}</span><span class="stat-label">{{$L.T "common.parents"}}</span></div>
-  {{end}}
-</div>
+{{if .Error}}<div class="alert alert-error" role="alert">{{.Error}}</div>{{end}}
+{{if .Notice}}<div class="alert alert-success" role="status">{{.Notice}}</div>{{end}}
 
-{{if .LastImport}}
-  <p class="muted">{{$L.T "home.last_import" .LastImport.FileName ($L.Date .LastImport.ImportedAt)}}</p>
+{{if .Lists}}
+<h2>{{$L.T "lists.title"}}</h2>
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr>
+      <th>{{$L.T "lists.col.name"}}</th>
+      <th>{{$L.T "lists.col.entries"}}</th>
+      <th>{{$L.T "lists.col.addresses"}}</th>
+      <th>{{$L.T "lists.col.last_import"}}</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+  {{range .Lists}}
+    <tr>
+      <td>{{.Name}}</td>
+      {{if .Families}}
+      <td>{{.Families}} {{$L.T "common.families"}}</td>
+      <td>{{.Parents}} {{$L.T "common.emails"}}</td>
+      {{else}}
+      <td>{{.Children}} {{$L.T "common.children"}}</td>
+      <td>{{.Parents}} {{$L.T "common.parents"}}</td>
+      {{end}}
+      <td>{{with $L.Date .LastImport}}{{.}}{{else}}{{$L.T "lists.no_import"}}{{end}}</td>
+      <td class="row-actions">
+        {{if .Children}}<a href="/children?list={{.ID}}">{{$L.T "lists.choose"}}</a>{{end}}
+        <a href="/lists/{{.ID}}/rename">{{$L.T "lists.rename"}}</a>
+        <a href="/lists/{{.ID}}/delete">{{$L.T "lists.delete"}}</a>
+      </td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
 {{else}}
   <p>{{$L.T "home.empty"}}</p>
 {{end}}
 
 <p class="actions">
-  {{if .Totals.Children}}<a class="button" href="/children">{{if .Totals.Families}}{{$L.T "home.families_button"}}{{else}}{{$L.T "home.children_button"}}{{end}}</a>{{end}}
-  <a class="{{if .Totals.Children}}button button-secondary{{else}}button{{end}}" href="/import">{{$L.T "home.import_button"}}</a>
+  <a class="button" href="/import">{{$L.T "home.import_button"}}</a>
 </p>
 {{end}}{{end}}

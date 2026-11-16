@@ -5,18 +5,14 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
-	"unicode"
-	"unicode/utf8"
 
 	"cafeteria-management/internal/i18n"
 	"cafeteria-management/internal/message"
 	"cafeteria-management/internal/store"
-	"cafeteria-management/internal/textnorm"
 )
 
 const (
-	maxTemplateNameLen = 80
-	maxTemplateBytes   = 1 << 20
+	maxTemplateBytes = 1 << 20
 )
 
 type templatesData struct {
@@ -46,31 +42,16 @@ type templateDeleteData struct {
 // cleaned name. It is shared by the template form and the compose page.
 // Subject and body are checked like a message in AnyMode (SPEC §4.3).
 func validateTemplate(loc i18n.Localizer, name, subject, body string) (cleanName string, errs, problems []string) {
-	switch clean := textnorm.Clean(name); {
-	case !utf8.ValidString(name) || hasControl(name):
-		errs = append(errs, loc.T("templates.error.name_invalid"))
-	case clean == "":
-		errs = append(errs, loc.T("templates.error.name_required"))
-	case utf8.RuneCountInString(clean) > maxTemplateNameLen:
-		errs = append(errs, loc.T("templates.error.name_too_long", maxTemplateNameLen))
-	default:
-		cleanName = clean
+	cleanName, problem := checkName(name)
+	if problem != "" {
+		errs = append(errs, nameError(loc, "templates.error.", problem))
 	}
 	problems = problemLines(loc, message.Check(subject, body, message.AnyMode))
 	return cleanName, errs, problems
 }
 
-func hasControl(s string) bool {
-	for _, r := range s {
-		if unicode.IsControl(r) {
-			return true
-		}
-	}
-	return false
-}
-
-// parseTemplateID reads the {id} of the route; it must be a positive integer.
-func parseTemplateID(r *http.Request) (int64, bool) {
+// parsePathID reads the {id} of a route (template or list); it must be a positive integer.
+func parsePathID(r *http.Request) (int64, bool) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	return id, err == nil && id > 0
 }
@@ -86,7 +67,7 @@ func (s *Server) renderTemplates(w http.ResponseWriter, r *http.Request, status 
 
 func (s *Server) renderTemplateForm(w http.ResponseWriter, r *http.Request, status int, data templateFormData) {
 	data.Placeholders = placeholderViews(s.localizer(r), message.AnyMode)
-	data.MaxSubject, data.MaxBody, data.MaxName = message.MaxSubjectLen, message.MaxBodyLen, maxTemplateNameLen
+	data.MaxSubject, data.MaxBody, data.MaxName = message.MaxSubjectLen, message.MaxBodyLen, maxNameLen
 	s.render(w, r, status, "template_form", "templates", data)
 }
 
@@ -155,7 +136,7 @@ func (s *Server) handleTemplateCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleTemplateEdit(w http.ResponseWriter, r *http.Request) {
-	id, ok := parseTemplateID(r)
+	id, ok := parsePathID(r)
 	if !ok {
 		s.templateNotFound(w, r)
 		return
@@ -173,7 +154,7 @@ func (s *Server) handleTemplateEdit(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleTemplateUpdate(w http.ResponseWriter, r *http.Request) {
-	id, ok := parseTemplateID(r)
+	id, ok := parsePathID(r)
 	if !ok {
 		s.templateNotFound(w, r)
 		return
@@ -204,7 +185,7 @@ func (s *Server) handleTemplateUpdate(w http.ResponseWriter, r *http.Request) {
 
 // handleTemplateDeleteConfirm asks for confirmation; nothing changes on GET.
 func (s *Server) handleTemplateDeleteConfirm(w http.ResponseWriter, r *http.Request) {
-	id, ok := parseTemplateID(r)
+	id, ok := parsePathID(r)
 	if !ok {
 		s.templateNotFound(w, r)
 		return
@@ -222,7 +203,7 @@ func (s *Server) handleTemplateDeleteConfirm(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) handleTemplateDelete(w http.ResponseWriter, r *http.Request) {
-	id, ok := parseTemplateID(r)
+	id, ok := parsePathID(r)
 	if !ok {
 		s.templateNotFound(w, r)
 		return

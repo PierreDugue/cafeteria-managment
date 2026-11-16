@@ -3,6 +3,19 @@
 (function () {
   "use strict";
 
+  // List selector: show the chosen list right away. The "Show" button stays
+  // in the page for browsers without JavaScript; it is hidden here.
+  var listSelect = document.getElementById("list-select");
+  var listShow = document.getElementById("list-show");
+  if (listSelect && listSelect.form) {
+    listSelect.addEventListener("change", function () {
+      listSelect.form.submit();
+    });
+    if (listShow) {
+      listShow.hidden = true;
+    }
+  }
+
   var toolbar = document.getElementById("toolbar");
   var counter = document.getElementById("counter");
   var table = document.getElementById("children-table");

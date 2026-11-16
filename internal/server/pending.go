@@ -14,9 +14,21 @@ type pendingImport struct {
 	fileName string
 	rowsRead int
 	rows     []store.ImportRow
-	base     int64 // ImportSummary.Base of the preview
-	expires  time.Time
+	// The target (SPEC §4.0): exactly one of listID (replace that list) and
+	// newListName (create it) is set. It is fixed at preview time, so the
+	// confirmation cannot change it.
+	listID      int64
+	newListName string
+	base        int64 // ImportSummary.Base of the preview (existing list only)
+	// preview is the page the user saw, shown again if the replacement is
+	// not confirmed. Its Token is empty here.
+	preview importPreviewData
+	expires time.Time
 }
+
+// maxPendingImports bounds the memory used by checked files waiting for
+// confirmation: the oldest one is dropped to make room.
+const maxPendingImports = 8
 
 // pendingImports keeps checked files in memory between the preview and the
 // confirmation, under a random token.
@@ -31,7 +43,8 @@ func newPendingImports(ttl time.Duration) *pendingImports {
 	return &pendingImports{ttl: ttl, now: time.Now, items: map[string]pendingImport{}}
 }
 
-// put stores p and returns its token. Expired entries are dropped.
+// put stores p and returns its token. Expired entries are dropped, then the oldest
+// ones beyond maxPendingImports.
 func (p *pendingImports) put(item pendingImport) string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -41,6 +54,16 @@ func (p *pendingImports) put(item pendingImport) string {
 		if now.After(v.expires) {
 			delete(p.items, k)
 		}
+	}
+	for len(p.items) >= maxPendingImports {
+		var oldest string
+		var oldestExp time.Time
+		for k, v := range p.items {
+			if oldest == "" || v.expires.Before(oldestExp) {
+				oldest, oldestExp = k, v.expires
+			}
+		}
+		delete(p.items, oldest)
 	}
 	token := rand.Text()
 	item.expires = now.Add(p.ttl)

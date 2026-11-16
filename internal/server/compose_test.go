@@ -28,11 +28,11 @@ func send(s *Server, method, path string, v url.Values, lang string) *httptest.R
 	return rec
 }
 
-// composeVals is a compose form: current version, the IDs, then key/value
-// pairs (action, subject, body...).
+// composeVals is a compose form: the first list with its current version,
+// the IDs, then key/value pairs (action, subject, body...).
 func composeVals(t *testing.T, st *store.Store, ids []int64, kv ...string) url.Values {
 	t.Helper()
-	v := url.Values{"version": {fmt.Sprint(currentVersion(t, st))}}
+	v := url.Values{"list": {fmt.Sprint(mainList(t, st))}, "version": {fmt.Sprint(currentVersion(t, st))}}
 	for _, id := range ids {
 		v.Add("child", fmt.Sprint(id))
 	}
@@ -235,7 +235,7 @@ func TestComposePreview(t *testing.T) {
 		seed(t, st, threeChildren)
 		ids := childIDs(t, st)
 		parents := map[string]int64{}
-		cs, _ := st.Children(t.Context())
+		cs, _ := st.Children(t.Context(), mainList(t, st))
 		for _, c := range cs {
 			parents[c.Email] = c.ParentID
 		}

@@ -1,6 +1,8 @@
 {{define "title"}}{{.L.T "preview.title"}}{{end}}
 {{define "content"}}{{$L := .L}}{{with .Data}}
 <h1>{{$L.T "preview.title"}}</h1>
+<p><strong>{{if .NewList}}{{$L.T "preview.target_new" .ListName}}{{else}}{{$L.T "preview.target_replace" .ListName}}{{end}}</strong></p>
+{{if .Error}}<div class="alert alert-error" role="alert">{{.Error}}</div>{{end}}
 <p class="muted">{{if .Result.Sheet}}{{$L.T "preview.file" .FileName .Result.Sheet}}{{else}}{{$L.T "preview.file_csv" .FileName}}{{end}}</p>
 
 <div class="stats">
@@ -91,9 +93,14 @@
   {{if .Token}}
   <form method="post" action="/import/confirm">
     <input type="hidden" name="token" value="{{.Token}}">
+    {{if .NewList}}
+    <button type="submit">{{$L.T "preview.confirm"}}</button>
+    {{else}}
+    <p class="confirm-check"><label><input type="checkbox" name="confirm_replace" value="1" required> {{$L.T "preview.replace_check" .ListName}}</label></p>
     <button type="submit" {{if .Summary.DeletedChildren}}class="button-danger"{{end}}>
-      {{if .Summary.DeletedChildren}}{{if .Result.Families}}{{$L.T "preview.confirm_deletions_families" (len .Summary.DeletedChildren)}}{{else}}{{$L.T "preview.confirm_deletions" (len .Summary.DeletedChildren)}}{{end}}{{else}}{{$L.T "preview.confirm"}}{{end}}
+      {{if .Summary.DeletedChildren}}{{if .Result.Families}}{{$L.T "preview.confirm_replace_deletions_families" .ListName (len .Summary.DeletedChildren)}}{{else}}{{$L.T "preview.confirm_replace_deletions" .ListName (len .Summary.DeletedChildren)}}{{end}}{{else}}{{$L.T "preview.confirm_replace" .ListName}}{{end}}
     </button>
+    {{end}}
   </form>
   {{end}}
   <a class="button button-secondary" href="/import">{{$L.T "preview.cancel"}}</a>

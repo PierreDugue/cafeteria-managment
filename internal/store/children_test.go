@@ -8,9 +8,7 @@ import (
 
 func seedChildren(t *testing.T, s *Store, rows []ImportRow) {
 	t.Helper()
-	if _, err := s.ImportFamilies(context.Background(), ImportRequest{FileName: "a.xlsx", RowsRead: len(rows), Rows: rows}); err != nil {
-		t.Fatal(err)
-	}
+	importRows(t, s, rows)
 }
 
 func childNames(cs []Child) []string {
@@ -33,7 +31,7 @@ func TestChildren(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("empty database", func(t *testing.T) {
-		got, err := openTest(t).Children(ctx)
+		got, err := openTest(t).Children(ctx, 1)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -45,7 +43,7 @@ func TestChildren(t *testing.T) {
 	t.Run("order and parent fields", func(t *testing.T) {
 		s := openTest(t)
 		seedChildren(t, s, childrenRows)
-		got, err := s.Children(ctx)
+		got, err := s.Children(ctx, mainList(t, s))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -75,7 +73,7 @@ func TestChildren(t *testing.T) {
 			{ParentName: "P2", ChildName: "Léa", Email: "b@example.com"},
 			{ParentName: "P1", ChildName: "Léa", Email: "a@example.com"},
 		})
-		got, _ := s.Children(ctx)
+		got, _ := s.Children(ctx, mainList(t, s))
 		want := []string{"Léa|a@example.com", "Léa|b@example.com"}
 		if !slices.Equal(childNames(got), want) {
 			t.Fatalf("got %v, want %v", childNames(got), want)
@@ -87,14 +85,15 @@ func TestChildrenByIDs(t *testing.T) {
 	ctx := context.Background()
 	s := openTest(t)
 	seedChildren(t, s, childrenRows)
-	all, err := s.Children(ctx)
+	lid := mainList(t, s)
+	all, err := s.Children(ctx, lid)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	t.Run("empty input", func(t *testing.T) {
 		for _, ids := range [][]int64{nil, {}} {
-			got, err := s.ChildrenByIDs(ctx, ids)
+			got, err := s.ChildrenByIDs(ctx, lid, ids)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -107,7 +106,7 @@ func TestChildrenByIDs(t *testing.T) {
 	t.Run("subset in store order", func(t *testing.T) {
 		// Ask in reverse order; result must follow the store order.
 		ids := []int64{all[4].ID, all[1].ID, all[0].ID}
-		got, err := s.ChildrenByIDs(ctx, ids)
+		got, err := s.ChildrenByIDs(ctx, lid, ids)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -118,14 +117,14 @@ func TestChildrenByIDs(t *testing.T) {
 	})
 
 	t.Run("unknown ids skipped", func(t *testing.T) {
-		got, err := s.ChildrenByIDs(ctx, []int64{9999, all[2].ID, -1, 0})
+		got, err := s.ChildrenByIDs(ctx, lid, []int64{9999, all[2].ID, -1, 0})
 		if err != nil {
 			t.Fatal(err)
 		}
 		if !slices.Equal(got, []Child{all[2]}) {
 			t.Fatalf("got %+v", got)
 		}
-		got, err = s.ChildrenByIDs(ctx, []int64{9999})
+		got, err = s.ChildrenByIDs(ctx, lid, []int64{9999})
 		if err != nil || len(got) != 0 {
 			t.Fatalf("got %+v, err %v", got, err)
 		}
@@ -136,7 +135,7 @@ func TestChildrenByIDs(t *testing.T) {
 		for _, c := range all {
 			ids = append(ids, c.ID)
 		}
-		got, err := s.ChildrenByIDs(ctx, ids)
+		got, err := s.ChildrenByIDs(ctx, lid, ids)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -150,7 +149,7 @@ func TestChildrenByIDs(t *testing.T) {
 		for i := range ids {
 			ids[i] = int64(i + 1)
 		}
-		got, err := s.ChildrenByIDs(ctx, ids)
+		got, err := s.ChildrenByIDs(ctx, lid, ids)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -162,10 +161,10 @@ func TestChildrenByIDs(t *testing.T) {
 	t.Run("closed store", func(t *testing.T) {
 		c := openTest(t)
 		c.Close()
-		if _, err := c.ChildrenByIDs(ctx, []int64{1}); err == nil {
+		if _, err := c.ChildrenByIDs(ctx, 1, []int64{1}); err == nil {
 			t.Fatal("want error")
 		}
-		if _, err := c.Children(ctx); err == nil {
+		if _, err := c.Children(ctx, 1); err == nil {
 			t.Fatal("want error")
 		}
 	})

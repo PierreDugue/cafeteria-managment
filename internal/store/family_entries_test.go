@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -16,7 +17,7 @@ func fam(num, name, email, invalid string) ImportRow {
 
 func importRows(t *testing.T, s *Store, rows []ImportRow) ImportSummary {
 	t.Helper()
-	sum, err := s.ImportFamilies(context.Background(), ImportRequest{FileName: "f.csv", RowsRead: len(rows), Rows: rows})
+	sum, err := s.ImportFamilies(context.Background(), into(t, s, ImportRequest{FileName: "f.csv", RowsRead: len(rows), Rows: rows}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,7 +26,7 @@ func importRows(t *testing.T, s *Store, rows []ImportRow) ImportSummary {
 
 func allChildren(t *testing.T, s *Store) []Child {
 	t.Helper()
-	cs, err := s.Children(context.Background())
+	cs, err := s.Children(context.Background(), mainList(t, s))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,9 +93,9 @@ func TestMigration002KeepsExistingData(t *testing.T) {
 			t.Errorf("child = %+v, want %+v", c, w)
 		}
 	}
-	tot, err := s.Totals(ctx)
-	if err != nil || tot.Parents != 2 || tot.Children != 3 || tot.Families != 0 {
-		t.Fatalf("totals = %+v, %v", tot, err)
+	tot := totals(t, s)
+	if tot.Parents != 2 || tot.Children != 3 || tot.Families != 0 {
+		t.Fatalf("totals = %+v", tot)
 	}
 
 	var version int
@@ -138,7 +139,6 @@ func TestMigration002Idempotent(t *testing.T) {
 }
 
 func TestFamilyEntriesBasics(t *testing.T) {
-	ctx := context.Background()
 	s := openTest(t)
 
 	sum := importRows(t, s, []ImportRow{
@@ -173,10 +173,7 @@ func TestFamilyEntriesBasics(t *testing.T) {
 		t.Errorf("valid entry = %+v", v)
 	}
 
-	tot, err := s.Totals(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	tot := totals(t, s)
 	// 4 distinct family numbers; three distinct addresses.
 	if tot.Families != 4 || tot.Children != 6 || tot.Parents != 3 {
 		t.Errorf("totals = %+v", tot)
@@ -272,7 +269,7 @@ func TestFamilyEntriesMoveBetweenKeys(t *testing.T) {
 	if sum.Children != (Changes{Added: 1, Deleted: 1}) || sum.Parents != (Changes{Deleted: 1}) {
 		t.Fatalf("summary = %+v / %+v", sum.Children, sum.Parents)
 	}
-	if tot, _ := s.Totals(context.Background()); tot.Parents != 0 || tot.Children != 1 {
+	if tot := totals(t, s); tot.Parents != 0 || tot.Children != 1 {
 		t.Errorf("totals = %+v", tot)
 	}
 
@@ -328,7 +325,7 @@ func TestFamilyDryRunMatchesRealImport(t *testing.T) {
 	before := allChildren(t, s)
 
 	rows := []ImportRow{fam("10", "A2", "a@example.fr", ""), fam("20", "B", "", ""), fam("40", "D", "", "")}
-	dry, err := s.ImportFamilies(ctx, ImportRequest{FileName: "x", RowsRead: 3, Rows: rows, DryRun: true})
+	dry, err := s.ImportFamilies(ctx, into(t, s, ImportRequest{FileName: "x", RowsRead: 3, Rows: rows, DryRun: true}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -356,10 +353,10 @@ func TestImportRowWithoutEmailAndFamilyNumberRejected(t *testing.T) {
 	s := openTest(t)
 	importRows(t, s, []ImportRow{fam("10", "A", "a@example.fr", "")})
 
-	_, err := s.ImportFamilies(context.Background(), ImportRequest{FileName: "x", Rows: []ImportRow{
+	_, err := s.ImportFamilies(context.Background(), into(t, s, ImportRequest{FileName: "x", Rows: []ImportRow{
 		fam("20", "B", "b@example.fr", ""),
 		{ParentName: "X", ChildName: "Y"},
-	}})
+	}}))
 	if err == nil {
 		t.Fatal("want error")
 	}
@@ -371,7 +368,6 @@ func TestImportRowWithoutEmailAndFamilyNumberRejected(t *testing.T) {
 }
 
 func TestSwitchBetweenExcelAndFamilyLayouts(t *testing.T) {
-	ctx := context.Background()
 	s := openTest(t)
 	importRows(t, s, []ImportRow{
 		{ParentName: "Marie", ChildName: "Léa", Email: "shared@example.fr"},
@@ -398,7 +394,7 @@ func TestSwitchBetweenExcelAndFamilyLayouts(t *testing.T) {
 	if err := s.db.QueryRow(`SELECT id FROM parents WHERE email = 'shared@example.fr'`).Scan(&afterID); err != nil || afterID != sharedID {
 		t.Errorf("shared email parent ID %d -> %d (%v)", sharedID, afterID, err)
 	}
-	tot, _ := s.Totals(ctx)
+	tot := totals(t, s)
 	if tot.Children != 2 || tot.Families != 2 || tot.Parents != 1 {
 		t.Errorf("totals = %+v", tot)
 	}
@@ -408,7 +404,7 @@ func TestSwitchBetweenExcelAndFamilyLayouts(t *testing.T) {
 	if sum.Children != (Changes{Added: 1, Deleted: 2}) || sum.Parents.Unchanged+sum.Parents.Updated != 1 {
 		t.Errorf("summary = %+v / %+v", sum.Children, sum.Parents)
 	}
-	tot, _ = s.Totals(ctx)
+	tot = totals(t, s)
 	if tot.Children != 1 || tot.Families != 0 {
 		t.Errorf("totals = %+v", tot)
 	}
@@ -454,7 +450,7 @@ func TestChildrenOrderFamilies(t *testing.T) {
 
 	// ChildrenByIDs returns no-email entries too.
 	ids := []int64{cs[2].ID, cs[4].ID}
-	sel, err := s.ChildrenByIDs(context.Background(), ids)
+	sel, err := s.ChildrenByIDs(context.Background(), mainList(t, s), ids)
 	if err != nil || len(sel) != 2 || sel[0].CanEmail() || sel[1].CanEmail() {
 		t.Fatalf("selected = %+v, %v", sel, err)
 	}
@@ -478,7 +474,7 @@ func TestChildrenOrderExcelUnchangedWithFamilyColumns(t *testing.T) {
 	}
 }
 
-func TestTotalsFamilies(t *testing.T) {
+func TestListCountsFamilies(t *testing.T) {
 	s := openTest(t)
 	importRows(t, s, []ImportRow{
 		fam("10", "A", "a@example.fr", ""),
@@ -486,9 +482,9 @@ func TestTotalsFamilies(t *testing.T) {
 		fam("10", "A", "", "x"),
 		fam("11", "B", "a@example.fr", ""),
 	})
-	tot, err := s.Totals(context.Background())
-	if err != nil || tot.Families != 2 || tot.Children != 4 || tot.Parents != 2 {
-		t.Fatalf("totals = %+v, %v", tot, err)
+	tot := totals(t, s)
+	if tot.Families != 2 || tot.Children != 4 || tot.Parents != 2 {
+		t.Fatalf("totals = %+v", tot)
 	}
 }
 
@@ -498,10 +494,12 @@ func TestChildrenTableConstraints(t *testing.T) {
 		_, err := s.db.Exec(q, args...)
 		return err
 	}
-	if err := exec(`INSERT INTO parents (id, name, email, created_at, updated_at) VALUES (1, 'P', 'p@example.fr', 't', 't')`); err != nil {
+	list := rawList(t, s, "Cantine")
+	if err := exec(`INSERT INTO parents (id, list_id, name, email, created_at, updated_at) VALUES (1, ?, 'P', 'p@example.fr', 't', 't')`, list); err != nil {
 		t.Fatal(err)
 	}
-	ins := `INSERT INTO children (parent_id, family_number, name, name_key, invalid_email, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 't', 't')`
+	ins := `INSERT INTO children (list_id, parent_id, family_number, name, name_key, invalid_email, created_at, updated_at) VALUES (` +
+		strconv.FormatInt(list, 10) + `, ?, ?, ?, ?, ?, 't', 't')`
 
 	// Valid rows first.
 	for _, args := range [][]any{
@@ -529,7 +527,7 @@ func TestChildrenTableConstraints(t *testing.T) {
 		})
 	}
 	// Same family number on another parent is fine.
-	if err := exec(`INSERT INTO parents (id, name, email, created_at, updated_at) VALUES (2, 'Q', 'q@example.fr', 't', 't')`); err != nil {
+	if err := exec(`INSERT INTO parents (id, list_id, name, email, created_at, updated_at) VALUES (2, ?, 'Q', 'q@example.fr', 't', 't')`, list); err != nil {
 		t.Fatal(err)
 	}
 	if err := exec(ins, 2, "10", "FAM", "fam", ""); err != nil {
