@@ -20,3 +20,18 @@ make build-all  # Windows + macOS binaries in dist/
 ```
 
 Use `go run ./cmd/cafeteria -port 9000` to change the port.
+
+## Continuous integration and releases
+
+- Every push runs formatting, `go vet` and the tests (`.github/workflows/checks.yml`).
+- To publish a version, tag a commit and push the tag:
+
+  ```sh
+  git tag v0.1.0
+  git push origin v0.1.0
+  ```
+
+  GitHub then runs the tests, builds the Windows `.exe` and the macOS
+  binaries, and attaches them with a `SHA256SUMS.txt` file to a new Release
+  (`.github/workflows/release.yml`). The binaries are not signed: Windows and
+  macOS show a security warning on first launch.
