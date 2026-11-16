@@ -12,12 +12,19 @@ import (
 	"cafeteria-management/internal/textnorm"
 )
 
-// ImportRow is one parent/child pair to import.
-// Email must be lower-case and valid (see package importer).
+// ImportRow is one entry to import: a parent/child pair (Excel) or a family
+// entry (CSV export, SPEC §4.1.1).
+//
+// For a family entry ChildName is its billing name (NOMFACT), and ParentName
+// too. Email must be lower-case and valid (see package importer); Email == ""
+// means the entry has no valid payer email (InvalidEmail then holds the
+// rejected value, or "" if it was empty), allowed only when FamilyNumber != "".
 type ImportRow struct {
-	ParentName string
-	ChildName  string
-	Email      string
+	ParentName   string
+	ChildName    string
+	Email        string
+	FamilyNumber string
+	InvalidEmail string
 }
 
 // Changes counts what an import does to one kind of record.
@@ -28,11 +35,13 @@ type Changes struct {
 	Unchanged int
 }
 
-// DeletedChild describes a child removed by an import.
+// DeletedChild describes a child (or family entry) removed by an import.
+// Email == "" for an entry without a valid email.
 type DeletedChild struct {
-	ChildName  string
-	ParentName string
-	Email      string
+	ChildName    string
+	ParentName   string
+	Email        string
+	FamilyNumber string
 }
 
 // ErrStaleImport is returned when the data changed since the preview the
@@ -63,7 +72,9 @@ type ImportSummary struct {
 
 // ImportFamilies replaces all parents and children with rows (SPEC §4.1):
 // matching records are updated, new ones added, the others deleted.
-// Parents match on email, children on parent + normalized name.
+// Parents match on email, children on parent + normalized name, family
+// entries on parent + family number (family number alone without a valid
+// email).
 //
 // Everything runs in one transaction. A dry run computes the changes the
 // same way and then rolls back, so a preview matches the real import.
@@ -100,46 +111,64 @@ func (s *Store) ImportFamilies(ctx context.Context, req ImportRequest) (ImportSu
 	keptChildren := map[int64]bool{}
 
 	for _, r := range req.Rows {
-		p, ok := parents[r.Email]
-		switch {
-		case !ok:
-			res, err := tx.ExecContext(ctx,
-				`INSERT INTO parents (name, email, created_at, updated_at) VALUES (?, ?, ?, ?)`,
-				r.ParentName, r.Email, now, now)
-			if err != nil {
-				return sum, fmt.Errorf("insert parent: %w", err)
-			}
-			id, err := res.LastInsertId()
-			if err != nil {
-				return sum, err
-			}
-			p = &parentRec{id: id, name: r.ParentName, email: r.Email}
-			parents[r.Email] = p
-			sum.Parents.Added++
-			keptParents[id] = true
-		case !keptParents[p.id]:
-			// First row for an existing parent: its name comes from this row.
-			if p.name != r.ParentName {
-				if _, err := tx.ExecContext(ctx,
-					`UPDATE parents SET name = ?, updated_at = ? WHERE id = ?`,
-					r.ParentName, now, p.id); err != nil {
-					return sum, fmt.Errorf("update parent: %w", err)
-				}
-				p.name = r.ParentName
-				sum.Parents.Updated++
-			} else {
-				sum.Parents.Unchanged++
-			}
-			keptParents[p.id] = true
+		if r.Email == "" && r.FamilyNumber == "" {
+			return sum, errors.New("import row without email must have a family number")
 		}
 
-		key := childKey{parentID: p.id, nameKey: textnorm.Key(r.ChildName)}
+		// An entry without a valid email has no parent (parentID 0).
+		var parentID int64
+		if r.Email != "" {
+			p, ok := parents[r.Email]
+			switch {
+			case !ok:
+				res, err := tx.ExecContext(ctx,
+					`INSERT INTO parents (name, email, created_at, updated_at) VALUES (?, ?, ?, ?)`,
+					r.ParentName, r.Email, now, now)
+				if err != nil {
+					return sum, fmt.Errorf("insert parent: %w", err)
+				}
+				id, err := res.LastInsertId()
+				if err != nil {
+					return sum, err
+				}
+				p = &parentRec{id: id, name: r.ParentName, email: r.Email}
+				parents[r.Email] = p
+				sum.Parents.Added++
+				keptParents[id] = true
+			case !keptParents[p.id]:
+				// First row for an existing parent: its name comes from this row.
+				if p.name != r.ParentName {
+					if _, err := tx.ExecContext(ctx,
+						`UPDATE parents SET name = ?, updated_at = ? WHERE id = ?`,
+						r.ParentName, now, p.id); err != nil {
+						return sum, fmt.Errorf("update parent: %w", err)
+					}
+					p.name = r.ParentName
+					sum.Parents.Updated++
+				} else {
+					sum.Parents.Unchanged++
+				}
+				keptParents[p.id] = true
+			}
+			parentID = p.id
+		}
+
+		key := childKey{parentID: parentID, family: r.FamilyNumber}
+		if r.FamilyNumber == "" {
+			key.nameKey = textnorm.Key(r.ChildName)
+		}
+		nameKey := textnorm.Key(r.ChildName)
 		c, ok := children[key]
 		switch {
 		case !ok:
+			var dbParent sql.NullInt64
+			if parentID != 0 {
+				dbParent = sql.NullInt64{Int64: parentID, Valid: true}
+			}
 			res, err := tx.ExecContext(ctx,
-				`INSERT INTO children (parent_id, name, name_key, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
-				p.id, r.ChildName, key.nameKey, now, now)
+				`INSERT INTO children (parent_id, family_number, name, name_key, invalid_email, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?)`,
+				dbParent, r.FamilyNumber, r.ChildName, nameKey, r.InvalidEmail, now, now)
 			if err != nil {
 				return sum, fmt.Errorf("insert child: %w", err)
 			}
@@ -147,14 +176,14 @@ func (s *Store) ImportFamilies(ctx context.Context, req ImportRequest) (ImportSu
 			if err != nil {
 				return sum, err
 			}
-			children[key] = &childRec{id: id, name: r.ChildName}
+			children[key] = &childRec{id: id, name: r.ChildName, invalidEmail: r.InvalidEmail}
 			sum.Children.Added++
 			keptChildren[id] = true
 		case !keptChildren[c.id]:
-			if c.name != r.ChildName {
+			if c.name != r.ChildName || c.invalidEmail != r.InvalidEmail {
 				if _, err := tx.ExecContext(ctx,
-					`UPDATE children SET name = ?, updated_at = ? WHERE id = ?`,
-					r.ChildName, now, c.id); err != nil {
+					`UPDATE children SET name = ?, name_key = ?, invalid_email = ?, updated_at = ? WHERE id = ?`,
+					r.ChildName, nameKey, r.InvalidEmail, now, c.id); err != nil {
 					return sum, fmt.Errorf("update child: %w", err)
 				}
 				sum.Children.Updated++
@@ -178,9 +207,12 @@ func (s *Store) ImportFamilies(ctx context.Context, req ImportRequest) (ImportSu
 		if _, err := tx.ExecContext(ctx, `DELETE FROM children WHERE id = ?`, c.id); err != nil {
 			return sum, fmt.Errorf("delete child: %w", err)
 		}
-		p := byID[key.parentID]
+		d := DeletedChild{ChildName: c.name, FamilyNumber: key.family}
+		if p := byID[key.parentID]; p != nil { // nil: entry without a valid email
+			d.ParentName, d.Email = p.name, p.email
+		}
 		sum.Children.Deleted++
-		sum.DeletedChildren = append(sum.DeletedChildren, DeletedChild{ChildName: c.name, ParentName: p.name, Email: p.email})
+		sum.DeletedChildren = append(sum.DeletedChildren, d)
 	}
 	for _, p := range parents {
 		if keptParents[p.id] {
@@ -197,7 +229,10 @@ func (s *Store) ImportFamilies(ctx context.Context, req ImportRequest) (ImportSu
 		if ka, kb := textnorm.Key(a.ChildName), textnorm.Key(b.ChildName); ka != kb {
 			return ka < kb
 		}
-		return a.Email < b.Email
+		if a.Email != b.Email {
+			return a.Email < b.Email
+		}
+		return a.FamilyNumber < b.FamilyNumber
 	})
 
 	if req.DryRun {
@@ -230,14 +265,18 @@ type parentRec struct {
 	email string
 }
 
+// childKey identifies a child across imports: (parent, name key) for an
+// Excel child, (parent or 0, family number) for a family entry.
 type childKey struct {
 	parentID int64
+	family   string
 	nameKey  string
 }
 
 type childRec struct {
-	id   int64
-	name string
+	id           int64
+	name         string
+	invalidEmail string
 }
 
 func loadParents(ctx context.Context, tx *sql.Tx) (map[string]*parentRec, error) {
@@ -259,7 +298,7 @@ func loadParents(ctx context.Context, tx *sql.Tx) (map[string]*parentRec, error)
 }
 
 func loadChildren(ctx context.Context, tx *sql.Tx) (map[childKey]*childRec, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT id, parent_id, name, name_key FROM children`)
+	rows, err := tx.QueryContext(ctx, `SELECT id, parent_id, family_number, name, name_key, invalid_email FROM children`)
 	if err != nil {
 		return nil, fmt.Errorf("load children: %w", err)
 	}
@@ -269,8 +308,14 @@ func loadChildren(ctx context.Context, tx *sql.Tx) (map[childKey]*childRec, erro
 	for rows.Next() {
 		c := &childRec{}
 		var k childKey
-		if err := rows.Scan(&c.id, &k.parentID, &c.name, &k.nameKey); err != nil {
+		var parentID sql.NullInt64 // NULL: entry without a valid email
+		var nameKey string
+		if err := rows.Scan(&c.id, &parentID, &k.family, &c.name, &nameKey, &c.invalidEmail); err != nil {
 			return nil, err
+		}
+		k.parentID = parentID.Int64
+		if k.family == "" {
+			k.nameKey = nameKey
 		}
 		out[k] = c
 	}
@@ -281,14 +326,16 @@ func loadChildren(ctx context.Context, tx *sql.Tx) (map[childKey]*childRec, erro
 type Totals struct {
 	Parents  int
 	Children int
+	Families int // distinct family numbers (0 for Excel data)
 }
 
 // Totals counts parents and children.
 func (s *Store) Totals(ctx context.Context) (Totals, error) {
 	var t Totals
 	err := s.db.QueryRowContext(ctx,
-		`SELECT (SELECT COUNT(*) FROM parents), (SELECT COUNT(*) FROM children)`).
-		Scan(&t.Parents, &t.Children)
+		`SELECT (SELECT COUNT(*) FROM parents), (SELECT COUNT(*) FROM children),
+		(SELECT COUNT(DISTINCT family_number) FROM children WHERE family_number <> '')`).
+		Scan(&t.Parents, &t.Children, &t.Families)
 	if err != nil {
 		return t, fmt.Errorf("count families: %w", err)
 	}

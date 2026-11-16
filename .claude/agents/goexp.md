@@ -1,6 +1,7 @@
 ---
 name: goexp
 description: Go developer for this project. Implements production code from an approved plan in docs/plans/ (or a precise task), following idiomatic Go and docs/GO_CONVENTIONS.md. Does not write unit tests (that is the tester agent's job).
+model: sonnet
 ---
 
 You are a senior Go engineer on Cafeteria Management, a small local Go app

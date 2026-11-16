@@ -32,14 +32,20 @@ sends one email to each concerned parent.
 
 Status: ✅ implemented (`internal/importer`, `internal/store`, `/import` pages).
 
-- Upload an `.xlsx` file from the browser (max 20 MB; `.xls`/`.csv` are
+- Upload an `.xlsx` file, or the `.csv` export of the families software
+  (§4.1.1), from the browser (max 20 MB; other formats such as `.xls` are
   refused with a hint to save as `.xlsx`). Only the first sheet is read.
+  The layout (parent/child or family export) is chosen from the header
+  row, whatever the file format.
 - Show a **preview** before saving: rows read, valid rows, row errors,
   warnings, and the planned changes.
 - **Row errors block the import**: missing parent name, missing child name,
   missing or invalid email. The user fixes the file and imports it again.
   (Importing only the valid rows would delete the children of the invalid
-  rows, since the file is the source of truth.)
+  rows, since the file is the source of truth.) These rules are those of
+  the parent/child layout and stay as they are; the family export has its
+  own rules (§4.1.1), where a missing or invalid payer email is only a
+  warning.
 - **Warnings don't block**: duplicate row (same child + email, ignored);
   same email with a different parent name (the first name is kept).
 - Nothing is written to the database during the preview. All parsed data is
@@ -55,9 +61,15 @@ Status: ✅ implemented (`internal/importer`, `internal/store`, `/import` pages)
   - Matching rules: a parent is identified by their email address
     (case-insensitive); a child by their name + parent, the name compared
     without case, accents or extra spaces ("LEA  Dupont" = "Léa Dupont").
+    A family entry (§4.1.1) by its family number + payer email, or by its
+    family number alone when it has no valid payer email.
     Matching keeps database IDs stable between imports.
   - A child listed with two parents (two rows, two emails) is stored once
     per parent.
+  - Both formats write the same data: a CSV import deletes the children of
+    an earlier Excel import, and the other way round (shown in the preview).
+  - In the counts, family entries (with or without a valid email) count as
+    children; parents are the valid email addresses only.
 - The preview shows what the import will change: N added, N updated,
   N deleted. Deletions are highlighted so the user can cancel.
 - Email history (§4.5), templates and settings are **not** affected by an
@@ -86,12 +98,85 @@ ignored):
 Sample file with fake data: `docs/exemple-familles.xlsx`.
 Later improvement: a manual column-mapping step.
 
+### 4.1.1 CSV import (family export)
+
+Status: ✅ implemented
+(`docs/plans/002-csv-import.md`).
+
+The user can also import the CSV export of the families software, through the
+same page, preview and confirmation as the Excel file (§4.1), with the same
+"the file is the source of truth" rule.
+
+**Format** (header line, `;`-separated; empty header cells are columns the
+app ignores):
+
+```
+NUMFAM;NUMFACFACT;NOMFACT;;;;;;;;;;;NOM RL1;PRENOM RL1;;PORT RL1;EMAIL RL1;NOM RL2;PRENOM RL2;;PORT RL2;EMAIL RL2;;;;PORT PAYEUR;EMAIL PAYEUR
+```
+
+- `NUMFAM`: family number. **A family can appear on several lines.**
+- `NOMFACT`: billing name. `NUMFACFACT`: billing number.
+- `RL1` / `RL2`: legal guardians 1 and 2 (`NOM`, `PRENOM`, `PORT` = mobile,
+  `EMAIL`). `PAYEUR`: the payer (`PORT`, `EMAIL`).
+
+**Recipient rule** (given by the user):
+
+- Emails are sent to **`EMAIL PAYEUR`** only.
+- Lines are grouped by `NUMFAM`. Within a family:
+  - if every line has the same `EMAIL PAYEUR` (case-insensitive), the family
+    is saved **once**, and its email goes to that address;
+  - if the lines have different `EMAIL PAYEUR` values, **each distinct
+    address is kept**, and the email is sent to each of them.
+- So one saved entry = one (`NUMFAM`, `EMAIL PAYEUR`) pair.
+
+**Data kept** (data minimisation): family number, billing name, payer email.
+Phone numbers, RL names/emails and other columns are not stored.
+
+**Decisions** (confirmed by the user, 2026-11-16):
+
+1. **Selection lists families**: the file has no child name, so the
+   selection page (§4.2) shows one row per (family number, payer email):
+   family number, billing name, payer email. A family with two different
+   payer emails appears on **two rows**, side by side, ticked separately.
+2. **Name**: `NOMFACT` is the name shown and used for `{{parent_name}}`.
+3. **Missing `EMAIL PAYEUR`** (should not happen): the family is still
+   imported, with a **warning on its line** in the preview. In the list it is
+   shown with a warning ("email du payeur manquant") and **cannot be selected**:
+   no email can be sent to it.
+4. **Invalid `EMAIL PAYEUR`**: does **not** block the import. Warning on the
+   line in the preview; the family is imported and treated like a missing
+   email (shown with a warning, cannot be selected).
+5. **Encoding** (UTF-8 or Windows-1252) is detected automatically.
+6. **Two families with the same payer email**, both selected: **one** email to
+   that address, mentioning both families (§4.4 rule).
+
+**Assumed** (recommended by the architect, not yet confirmed):
+
+- The Excel parent/child import (§4.1) stays available. Each import, CSV or
+  Excel, replaces all the data.
+- A line without `NUMFAM` or without `NOMFACT` blocks the import (a family
+  cannot be identified or named without them).
+
 ### 4.2 Child list and selection
+
+Status: ✅ implemented (plan `docs/plans/001-child-selection.md`). One row per
+child + parent pair; search, selection and counter run in the page; at most
+5,000 children per selection. Class filter not done (no class column yet).
 
 - List all children with their parent(s) and email.
 - Search by child or parent name; filter (e.g. by class, if present in the file).
 - Select children with checkboxes; "select all / none" for the current filter.
 - Show a counter: N children selected → M emails will be sent.
+
+**Family data** (CSV export, §4.1.1; plan `docs/plans/002-csv-import.md`):
+the list shows one row per family entry: family number, billing name, payer
+email. Rows of one family stay adjacent (sorted by the family's name, then
+family number). An entry without a valid payer email is shown with a
+warning ("Email du payeur manquant", or "Email du payeur invalide : …" with
+the value read, so the user can fix the file) and its checkbox is disabled;
+a notice gives their number. The server refuses a selection that contains
+one. An invalid payer email in a family that also has a valid one gives
+that family an extra, unselectable row.
 
 ### 4.3 Email composition
 
@@ -191,9 +276,15 @@ Tests use a fake sender; no real email is ever sent from tests.
 ## 7. Data model (SQLite)
 
 ```
-parents        id, name, email (unique, lower-case), created_at, updated_at
-children       id, parent_id, name, name_key, created_at, updated_at
-               -- unique (parent_id, name_key); deleted with their parent
+parents        id, name, email (unique, lower-case, always valid), created_at, updated_at
+children       id, parent_id (nullable), family_number, name, name_key,
+               invalid_email, created_at, updated_at
+               -- Excel child: family_number ''; unique (parent_id, name_key)
+               -- family entry: name = NOMFACT; unique (parent_id, family_number)
+               -- family entry without a valid payer email: parent_id NULL,
+               --   invalid_email = value read ('' if missing);
+               --   unique (family_number)
+               -- deleted with their parent
 imports        id, file_name, imported_at, rows_read,
                parents_added/updated/deleted, children_added/updated/deleted
 templates      id, name, subject, body, created_at, updated_at
@@ -277,7 +368,7 @@ The app starts as a browser tab. It may later run in its own window with
 2. **Storage** — SQLite, migrations, data folder. ✅
 3. **Import** — Excel upload, preview, save. ✅ (minimal FR/EN i18n added
    with it, since no UI text may be hard-coded)
-4. **Selection** — child list, search, selection.
+4. **Selection** — child list, search, selection. ✅
 5. **Compose & send** — templates, placeholders, preview, sending queue
    (fake sender), history.
 6. **Microsoft 365** — Microsoft sign-in and Graph sending.

@@ -11,7 +11,9 @@ decision changes.
 ## Status
 
 Done: SQLite storage with migrations, Excel import with preview (SPEC §4.1),
-minimal FR/EN i18n. Next: child list and selection (§4.2). See the milestones
+minimal FR/EN i18n, child list and selection (§4.2), CSV import of the
+families software export (§4.1.1, plan `docs/plans/002-csv-import.md`).
+Next: email composition (§4.3). See the milestones
 in `docs/SPEC.md` §11.
 
 ## Commands
@@ -33,6 +35,7 @@ cmd/cafeteria/     entry point: flags, startup, shutdown (wiring only)
 internal/server/   HTTP routes, handlers, localhost/CSRF protection
 internal/store/    SQLite access; migrations in store/migrations/NNN_*.sql
 internal/importer/ Excel parsing and row validation (no DB access)
+internal/recipients/ groups selected children into one recipient per parent
 internal/i18n/     translations loader (Localizer.T in templates)
 internal/textnorm/ name normalization for matching (case, accents, spaces)
 web/templates/     layout.html + one file per page
@@ -85,6 +88,7 @@ Features go through four agents (`.claude/agents/`), in this order:
 
 ## Open points
 
-- Excel file format not confirmed yet (SPEC §10).
+- The real file is the families software's CSV export (SPEC §4.1.1); the
+  Excel parent/child layout is still unconfirmed (SPEC §10).
 - Email account is Microsoft 365: send via Microsoft Graph with OAuth2
   (SPEC §5.1). Unknown yet whether IT admin consent is needed.

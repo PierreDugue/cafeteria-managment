@@ -19,7 +19,7 @@ import (
 )
 
 // pageNames are the templates in web/templates rendered inside layout.html.
-var pageNames = []string{"home", "import", "import_preview"}
+var pageNames = []string{"home", "import", "import_preview", "children", "compose"}
 
 // Server serves the web UI.
 type Server struct {
@@ -61,6 +61,8 @@ func New(version string, st *store.Store) (*Server, error) {
 	mux.HandleFunc("GET /import", s.handleImportForm)
 	mux.HandleFunc("POST /import/preview", s.handleImportPreview)
 	mux.HandleFunc("POST /import/confirm", s.handleImportConfirm)
+	mux.HandleFunc("GET /children", s.handleChildren)
+	mux.HandleFunc("POST /compose", s.handleCompose)
 
 	// Block requests from other websites open in the browser (CSRF) and
 	// from other host names pointing at this machine (DNS rebinding).

@@ -40,7 +40,7 @@ func TestParseValidFile(t *testing.T) {
 		{"Paul Martin", "CP", "Zoé Martin", "mailto:paul@example.fr"},
 	})
 
-	res, err := Parse(buf)
+	res, err := ParseXLSX(buf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestParseIssues(t *testing.T) {
 		{"Jeanne", "Tom", "j@example.fr"},      // 9: parent name conflict
 	})
 
-	res, err := Parse(buf)
+	res, err := ParseXLSX(buf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,28 +111,28 @@ func TestParseIssues(t *testing.T) {
 
 func TestParseFileErrors(t *testing.T) {
 	t.Run("not excel", func(t *testing.T) {
-		_, err := Parse(strings.NewReader("hello"))
+		_, err := ParseXLSX(strings.NewReader("hello"))
 		if !errors.Is(err, ErrUnreadable) {
 			t.Fatalf("err = %v", err)
 		}
 	})
 
 	t.Run("empty", func(t *testing.T) {
-		_, err := Parse(xlsx(t, nil))
+		_, err := ParseXLSX(xlsx(t, nil))
 		if !errors.Is(err, ErrEmpty) {
 			t.Fatalf("err = %v", err)
 		}
 	})
 
 	t.Run("header only", func(t *testing.T) {
-		_, err := Parse(xlsx(t, [][]any{{"nom parent", "nom enfant", "email"}}))
+		_, err := ParseXLSX(xlsx(t, [][]any{{"nom parent", "nom enfant", "email"}}))
 		if !errors.Is(err, ErrEmpty) {
 			t.Fatalf("err = %v", err)
 		}
 	})
 
 	t.Run("missing columns", func(t *testing.T) {
-		_, err := Parse(xlsx(t, [][]any{{"nom parent", "classe"}, {"Jean", "CP"}}))
+		_, err := ParseXLSX(xlsx(t, [][]any{{"nom parent", "classe"}, {"Jean", "CP"}}))
 		var mc *MissingColumnsError
 		if !errors.As(err, &mc) {
 			t.Fatalf("err = %v", err)

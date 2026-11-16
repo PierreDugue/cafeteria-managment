@@ -10,7 +10,7 @@
   <p class="note">{{$L.T "import.replace_note"}}</p>
   <form method="post" action="/import/preview" enctype="multipart/form-data">
     <label for="file">{{$L.T "import.file_label"}}</label>
-    <input id="file" name="file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required>
+    <input id="file" name="file" type="file" accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" required>
     <button type="submit">{{$L.T "import.preview_button"}}</button>
   </form>
 </section>
@@ -24,8 +24,8 @@
       <th>{{$L.T "import.col.date"}}</th>
       <th>{{$L.T "import.col.file"}}</th>
       <th class="num">{{$L.T "import.col.rows"}}</th>
-      <th>{{$L.T "common.children"}} <small class="muted">({{$L.T "import.changes_legend"}})</small></th>
-      <th>{{$L.T "common.parents"}}</th>
+      <th>{{$L.T "import.col.entries"}} <small class="muted">({{$L.T "import.changes_legend"}})</small></th>
+      <th>{{$L.T "import.col.addresses"}}</th>
     </tr>
   </thead>
   <tbody>

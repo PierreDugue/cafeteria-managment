@@ -17,6 +17,9 @@ const (
 	maxUploadMB    = 20
 	maxUploadBytes = maxUploadMB << 20
 	historyLimit   = 20
+	// maxShownIssues is the most errors, and the most warnings, the preview
+	// lists: a crafted or broken file can have thousands.
+	maxShownIssues = 100
 )
 
 type importFormData struct {
@@ -31,6 +34,21 @@ type importPreviewData struct {
 	Summary   store.ImportSummary
 	NoChanges bool
 	Token     string // empty when the file has errors and cannot be imported
+	NoEmail   int    // rows without a valid email (family layout)
+
+	// First maxShownIssues errors and warnings, and how many are not shown.
+	Errors       []importer.Issue
+	MoreErrors   int
+	Warnings     []importer.Issue
+	MoreWarnings int
+}
+
+// firstIssues returns at most maxShownIssues issues and the number left out.
+func firstIssues(is []importer.Issue) ([]importer.Issue, int) {
+	if len(is) <= maxShownIssues {
+		return is, 0
+	}
+	return is[:maxShownIssues], len(is) - maxShownIssues
 }
 
 // handleImportForm shows the upload form and the import history.
@@ -83,12 +101,16 @@ func (s *Server) handleImportPreview(w http.ResponseWriter, r *http.Request) {
 	defer file.Close()
 
 	fileName := filepath.Base(header.Filename)
-	if !strings.EqualFold(filepath.Ext(fileName), ".xlsx") {
+	var res *importer.Result
+	switch strings.ToLower(filepath.Ext(fileName)) {
+	case ".xlsx":
+		res, err = importer.ParseXLSX(file)
+	case ".csv":
+		res, err = importer.ParseCSV(file)
+	default:
 		userError(loc.T("import.error.format"))
 		return
 	}
-
-	res, err := importer.Parse(file)
 	if err != nil {
 		var missing *importer.MissingColumnsError
 		switch {
@@ -98,6 +120,10 @@ func (s *Server) handleImportPreview(w http.ResponseWriter, r *http.Request) {
 				names[i] = loc.T("import.quoted", loc.T("import.column."+string(c)))
 			}
 			userError(loc.T("import.error.missing_columns", strings.Join(names, ", ")))
+		case errors.Is(err, importer.ErrTooLarge):
+			userError(loc.T("import.error.too_large", maxUploadMB))
+		case errors.Is(err, importer.ErrTooManyColumns):
+			userError(loc.T("import.error.too_many_columns"))
 		case errors.Is(err, importer.ErrEmpty):
 			userError(loc.T("import.error.empty"))
 		default:
@@ -108,6 +134,13 @@ func (s *Server) handleImportPreview(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := importPreviewData{FileName: fileName, Result: res}
+	data.Errors, data.MoreErrors = firstIssues(res.Errors)
+	data.Warnings, data.MoreWarnings = firstIssues(res.Warnings)
+	for _, row := range res.Rows {
+		if row.Email == "" {
+			data.NoEmail++
+		}
+	}
 	if len(res.Errors) == 0 {
 		rows := toImportRows(res.Rows)
 		sum, err := s.store.ImportFamilies(r.Context(), store.ImportRequest{
@@ -158,7 +191,10 @@ func (s *Server) handleImportConfirm(w http.ResponseWriter, r *http.Request) {
 func toImportRows(rows []importer.Row) []store.ImportRow {
 	out := make([]store.ImportRow, len(rows))
 	for i, r := range rows {
-		out[i] = store.ImportRow{ParentName: r.ParentName, ChildName: r.ChildName, Email: r.Email}
+		out[i] = store.ImportRow{
+			ParentName: r.ParentName, ChildName: r.ChildName, Email: r.Email,
+			FamilyNumber: r.FamilyNumber, InvalidEmail: r.InvalidEmail,
+		}
 	}
 	return out
 }

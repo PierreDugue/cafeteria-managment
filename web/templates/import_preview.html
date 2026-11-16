@@ -1,18 +1,20 @@
 {{define "title"}}{{.L.T "preview.title"}}{{end}}
 {{define "content"}}{{$L := .L}}{{with .Data}}
 <h1>{{$L.T "preview.title"}}</h1>
-<p class="muted">{{$L.T "preview.file" .FileName .Result.Sheet}}</p>
+<p class="muted">{{if .Result.Sheet}}{{$L.T "preview.file" .FileName .Result.Sheet}}{{else}}{{$L.T "preview.file_csv" .FileName}}{{end}}</p>
 
 <div class="stats">
   <div class="stat"><span class="stat-value">{{.Result.RowsRead}}</span><span class="stat-label">{{$L.T "preview.rows_read"}}</span></div>
-  <div class="stat"><span class="stat-value">{{len .Result.Rows}}</span><span class="stat-label">{{$L.T "preview.rows_valid"}}</span></div>
+  <div class="stat"><span class="stat-value">{{len .Result.Rows}}</span><span class="stat-label">{{if .Result.Families}}{{$L.T "preview.entries_valid"}}{{else}}{{$L.T "preview.rows_valid"}}{{end}}</span></div>
+  {{if .NoEmail}}<div class="stat"><span class="stat-value">{{.NoEmail}}</span><span class="stat-label">{{$L.T "preview.no_email"}}</span></div>{{end}}
 </div>
 
 {{if .Result.Errors}}
 <section class="card card-error">
   <h2>{{$L.T "preview.errors_title"}} ({{len .Result.Errors}})</h2>
   <p>{{$L.T "preview.errors_help"}}</p>
-  {{template "issues" (issues $L .Result.Errors)}}
+  {{template "issues" (issues $L .Errors)}}
+  {{if .MoreErrors}}<p class="muted">{{$L.T "preview.more_issues" .MoreErrors}}</p>{{end}}
 </section>
 {{else}}
 
@@ -33,14 +35,14 @@
   </thead>
   <tbody>
     <tr>
-      <th scope="row">{{$L.T "common.children"}}</th>
+      <th scope="row">{{if .Result.Families}}{{$L.T "common.family_entries"}}{{else}}{{$L.T "common.children"}}{{end}}</th>
       <td class="num">{{.Summary.Children.Added}}</td>
       <td class="num">{{.Summary.Children.Updated}}</td>
       <td class="num {{if .Summary.Children.Deleted}}danger{{end}}">{{.Summary.Children.Deleted}}</td>
       <td class="num">{{.Summary.Children.Unchanged}}</td>
     </tr>
     <tr>
-      <th scope="row">{{$L.T "common.parents"}}</th>
+      <th scope="row">{{if .Result.Families}}{{$L.T "common.emails"}}{{else}}{{$L.T "common.parents"}}{{end}}</th>
       <td class="num">{{.Summary.Parents.Added}}</td>
       <td class="num">{{.Summary.Parents.Updated}}</td>
       <td class="num {{if .Summary.Parents.Deleted}}danger{{end}}">{{.Summary.Parents.Deleted}}</td>
@@ -53,14 +55,22 @@
 
 {{if .Summary.DeletedChildren}}
 <section class="card card-warning">
-  <h2>{{$L.T "preview.deleted_title"}} ({{len .Summary.DeletedChildren}})</h2>
+  <h2>{{if .Result.Families}}{{$L.T "preview.deleted_title_families"}}{{else}}{{$L.T "preview.deleted_title"}}{{end}} ({{len .Summary.DeletedChildren}})</h2>
   <p>{{$L.T "preview.deleted_help"}}</p>
   <div class="table-wrap">
   <table>
+    {{if .Result.Families}}
+    <thead><tr><th>{{$L.T "preview.col.family_number"}}</th><th>{{$L.T "preview.col.billing_name"}}</th><th>{{$L.T "preview.col.email"}}</th></tr></thead>
+    <tbody>
+    {{range .Summary.DeletedChildren}}
+      <tr><td>{{.FamilyNumber}}</td><td>{{.ChildName}}</td><td>{{if .Email}}{{.Email}}{{else}}{{$L.T "common.no_valid_email"}}{{end}}</td></tr>
+    {{end}}
+    {{else}}
     <thead><tr><th>{{$L.T "preview.col.child"}}</th><th>{{$L.T "preview.col.parent"}}</th><th>{{$L.T "preview.col.email"}}</th></tr></thead>
     <tbody>
     {{range .Summary.DeletedChildren}}
       <tr><td>{{.ChildName}}</td><td>{{.ParentName}}</td><td>{{.Email}}</td></tr>
+    {{end}}
     {{end}}
     </tbody>
   </table>
@@ -72,7 +82,8 @@
 {{if .Result.Warnings}}
 <section class="card">
   <h2>{{$L.T "preview.warnings_title"}} ({{len .Result.Warnings}})</h2>
-  {{template "issues" (issues $L .Result.Warnings)}}
+  {{template "issues" (issues $L .Warnings)}}
+  {{if .MoreWarnings}}<p class="muted">{{$L.T "preview.more_issues" .MoreWarnings}}</p>{{end}}
 </section>
 {{end}}
 
@@ -81,7 +92,7 @@
   <form method="post" action="/import/confirm">
     <input type="hidden" name="token" value="{{.Token}}">
     <button type="submit" {{if .Summary.DeletedChildren}}class="button-danger"{{end}}>
-      {{if .Summary.DeletedChildren}}{{$L.T "preview.confirm_deletions" (len .Summary.DeletedChildren)}}{{else}}{{$L.T "preview.confirm"}}{{end}}
+      {{if .Summary.DeletedChildren}}{{if .Result.Families}}{{$L.T "preview.confirm_deletions_families" (len .Summary.DeletedChildren)}}{{else}}{{$L.T "preview.confirm_deletions" (len .Summary.DeletedChildren)}}{{end}}{{else}}{{$L.T "preview.confirm"}}{{end}}
     </button>
   </form>
   {{end}}

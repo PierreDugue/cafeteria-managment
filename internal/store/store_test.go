@@ -33,9 +33,9 @@ func TestImportFamilies(t *testing.T) {
 	s := openTest(t)
 
 	first := []ImportRow{
-		{"Marie Dupont", "Léa Dupont", "marie@example.fr"},
-		{"Marie Dupont", "Tom Dupont", "marie@example.fr"},
-		{"Paul Martin", "Zoé Martin", "paul@example.fr"},
+		{ParentName: "Marie Dupont", ChildName: "Léa Dupont", Email: "marie@example.fr"},
+		{ParentName: "Marie Dupont", ChildName: "Tom Dupont", Email: "marie@example.fr"},
+		{ParentName: "Paul Martin", ChildName: "Zoé Martin", Email: "paul@example.fr"},
 	}
 
 	// A dry run changes nothing.
@@ -61,8 +61,8 @@ func TestImportFamilies(t *testing.T) {
 	// Second file: Marie renamed, Léa's name written differently, Tom gone,
 	// Paul gone, a new family added.
 	second := []ImportRow{
-		{"Marie Dupont-Leroy", "LEA DUPONT", "marie@example.fr"},
-		{"Ana Silva", "Rui Silva", "ana@example.fr"},
+		{ParentName: "Marie Dupont-Leroy", ChildName: "LEA DUPONT", Email: "marie@example.fr"},
+		{ParentName: "Ana Silva", ChildName: "Rui Silva", Email: "ana@example.fr"},
 	}
 	preview, err := s.ImportFamilies(ctx, ImportRequest{FileName: "b.xlsx", RowsRead: 2, Rows: second, DryRun: true})
 	if err != nil {

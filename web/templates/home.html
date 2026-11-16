@@ -3,8 +3,13 @@
 <h1>{{$L.T "home.title"}}</h1>
 
 <div class="stats">
+  {{if .Totals.Families}}
+  <div class="stat"><span class="stat-value">{{.Totals.Families}}</span><span class="stat-label">{{$L.T "common.families"}}</span></div>
+  <div class="stat"><span class="stat-value">{{.Totals.Parents}}</span><span class="stat-label">{{$L.T "common.emails"}}</span></div>
+  {{else}}
   <div class="stat"><span class="stat-value">{{.Totals.Children}}</span><span class="stat-label">{{$L.T "common.children"}}</span></div>
   <div class="stat"><span class="stat-value">{{.Totals.Parents}}</span><span class="stat-label">{{$L.T "common.parents"}}</span></div>
+  {{end}}
 </div>
 
 {{if .LastImport}}
@@ -13,5 +18,8 @@
   <p>{{$L.T "home.empty"}}</p>
 {{end}}
 
-<p><a class="button" href="/import">{{$L.T "home.import_button"}}</a></p>
+<p class="actions">
+  {{if .Totals.Children}}<a class="button" href="/children">{{if .Totals.Families}}{{$L.T "home.families_button"}}{{else}}{{$L.T "home.children_button"}}{{end}}</a>{{end}}
+  <a class="{{if .Totals.Children}}button button-secondary{{else}}button{{end}}" href="/import">{{$L.T "home.import_button"}}</a>
+</p>
 {{end}}{{end}}

@@ -1,0 +1,32 @@
+{{define "title"}}{{.L.T "compose.title"}}{{end}}
+{{define "content"}}{{$L := .L}}{{with .Data}}
+<h1>{{$L.T "compose.title"}}</h1>
+
+{{if .Dropped}}<div class="alert alert-warning" role="status">{{$L.T "compose.dropped" .Dropped}}</div>{{end}}
+
+<p>{{if .Families}}{{$L.T "compose.emails_count_families" (len .Recipients)}}{{else}}{{$L.T "compose.emails_count" (len .Recipients)}}{{end}}</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr>
+      <th>{{if .Families}}{{$L.T "compose.col.payer"}}{{else}}{{$L.T "compose.col.parent"}}{{end}}</th>
+      <th>{{$L.T "compose.col.email"}}</th>
+      <th>{{if .Families}}{{$L.T "compose.col.families"}}{{else}}{{$L.T "compose.col.children"}}{{end}}</th>
+    </tr>
+  </thead>
+  <tbody>
+  {{range .Recipients}}
+    <tr>
+      <td>{{.ParentName}}</td>
+      <td>{{.Email}}</td>
+      <td>{{range $i, $c := .Children}}{{if $i}}, {{end}}{{$c}}{{end}}</td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+
+<p class="note">{{$L.T "compose.next_step"}}</p>
+<p class="actions"><a class="button button-secondary" href="/children">{{$L.T "compose.back"}}</a></p>
+{{end}}{{end}}

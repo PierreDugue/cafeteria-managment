@@ -196,12 +196,12 @@ func TestImportRejected(t *testing.T) {
 		wantBody string
 	}{
 		{
-			name: "wrong extension", file: "familles.csv", content: []byte("a,b,c"),
-			wantCode: http.StatusUnprocessableEntity, wantBody: "Seuls les fichiers Excel .xlsx",
+			name: "wrong extension", file: "familles.xls", content: []byte("a,b,c"),
+			wantCode: http.StatusUnprocessableEntity, wantBody: "Seuls les fichiers .csv et Excel .xlsx",
 		},
 		{
 			name: "not excel", file: "familles.xlsx", content: []byte("hello"),
-			wantCode: http.StatusUnprocessableEntity, wantBody: "Impossible de lire ce fichier",
+			wantCode: http.StatusUnprocessableEntity, wantBody: "Ce fichier ne peut pas être lu",
 		},
 		{
 			name: "missing columns", file: "familles.xlsx",
@@ -241,6 +241,11 @@ func TestImportRejected(t *testing.T) {
 
 func upload(t *testing.T, s *Server, name string, content []byte) *httptest.ResponseRecorder {
 	t.Helper()
+	return do(s, uploadRequest(t, name, content))
+}
+
+func uploadRequest(t *testing.T, name string, content []byte) *http.Request {
+	t.Helper()
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
 	fw, err := mw.CreateFormFile("file", name)
@@ -255,7 +260,7 @@ func upload(t *testing.T, s *Server, name string, content []byte) *httptest.Resp
 	}
 	req := httptest.NewRequest(http.MethodPost, "/import/preview", &body)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
-	return do(s, req)
+	return req
 }
 
 func confirm(s *Server, token string) *httptest.ResponseRecorder {

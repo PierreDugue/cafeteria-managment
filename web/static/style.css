@@ -10,6 +10,7 @@
   --danger-bg: #fdecea;
   --warning-bg: #fff6e0;
   --warning-border: #e8c26a;
+  --warning-text: #8a5a00;
   --success-bg: #e7f4ee;
   --radius: 8px;
 }
@@ -80,3 +81,22 @@ th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--bor
 thead th { font-size: 14px; color: var(--muted); font-weight: 600; }
 .num { text-align: right; font-variant-numeric: tabular-nums; }
 .danger { color: var(--danger); font-weight: 600; }
+
+[hidden] { display: none !important; }
+.alert-warning { background: var(--warning-bg); border: 1px solid var(--warning-border); }
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap;
+}
+
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 16px 0 8px; }
+.toolbar input[type="search"] {
+  flex: 1 1 240px; min-width: 0; padding: 8px 12px; font: inherit;
+  border: 1px solid var(--border); border-radius: var(--radius);
+}
+.counter { font-weight: 600; margin: 8px 0 16px; }
+form.selection { display: block; }
+.selection td:first-child, .selection th:first-child { width: 1%; }
+
+.row-disabled td { color: var(--muted); }
+.warning-text { color: var(--warning-text); font-weight: 600; }

@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{template "title" .}} · {{.L.T "app.title"}}</title>
   <link rel="stylesheet" href="/static/style.css">
+  {{block "scripts" .}}{{end}}
 </head>
 <body>
   <header class="topbar">
@@ -13,6 +14,7 @@
       <nav>
         <a href="/" {{if eq .Active "home"}}aria-current="page"{{end}}>{{.L.T "nav.home"}}</a>
         <a href="/import" {{if eq .Active "import"}}aria-current="page"{{end}}>{{.L.T "nav.import"}}</a>
+        <a href="/children" {{if eq .Active "children"}}aria-current="page"{{end}}>{{.L.T "nav.children"}}</a>
       </nav>
     </div>
   </header>

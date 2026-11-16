@@ -1,0 +1,64 @@
+{{define "title"}}{{with .Data}}{{if .Families}}{{$.L.T "children.title_families"}}{{else}}{{$.L.T "children.title"}}{{end}}{{end}}{{end}}
+{{define "scripts"}}<script src="/static/children.js" defer></script>{{end}}
+{{define "content"}}{{$L := .L}}{{with .Data}}
+<h1>{{if .Families}}{{$L.T "children.title_families"}}{{else}}{{$L.T "children.title"}}{{end}}</h1>
+
+{{if .Error}}<div class="alert alert-error" role="alert">{{.Error}}</div>{{end}}
+
+{{if .Rows}}
+{{if .NoEmail}}<div class="alert alert-warning" role="status">{{$L.T "children.no_email_notice" .NoEmail}}</div>{{end}}
+<div class="toolbar" id="toolbar" hidden>
+  <label for="search">{{$L.T "children.search_label"}}</label>
+  <input id="search" type="search" placeholder="{{if .Families}}{{$L.T "children.search_placeholder_families"}}{{else}}{{$L.T "children.search_placeholder"}}{{end}}" autocomplete="off">
+  <button type="button" class="button-secondary" id="select-all">{{$L.T "children.select_all"}}</button>
+  <button type="button" class="button-secondary" id="select-none">{{$L.T "children.select_none"}}</button>
+</div>
+<p class="counter" id="counter" role="status" aria-live="polite" data-template="{{if .Families}}{{$L.T "children.counter_families"}}{{else}}{{$L.T "children.counter"}}{{end}}" hidden></p>
+
+<form method="post" action="/compose" class="selection">
+  <div class="table-wrap">
+  <table id="children-table">
+    <thead>
+      <tr>
+        <th><span class="visually-hidden">{{$L.T "children.col.select"}}</span></th>
+        {{if .Families}}
+        <th>{{$L.T "children.col.family_number"}}</th>
+        <th>{{$L.T "children.col.billing_name"}}</th>
+        <th>{{$L.T "children.col.payer_email"}}</th>
+        {{else}}
+        <th>{{$L.T "children.col.child"}}</th>
+        <th>{{$L.T "children.col.parent"}}</th>
+        <th>{{$L.T "children.col.email"}}</th>
+        {{end}}
+      </tr>
+    </thead>
+    <tbody>
+    {{range .Rows}}
+      {{if .CanEmail}}
+      <tr data-search="{{.Search}}" data-email="{{.Email}}">
+        <td><input type="checkbox" name="child" value="{{.ID}}" aria-label="{{.Name}}"></td>
+        {{if $.Data.Families}}<td>{{.FamilyNumber}}</td><td>{{.Name}}</td><td>{{.Email}}</td>
+        {{else}}<td>{{.Name}}</td><td>{{.ParentName}}</td><td>{{.Email}}</td>{{end}}
+      </tr>
+      {{else}}
+      <tr class="row-disabled" data-search="{{.Search}}" data-email="">
+        <td><input type="checkbox" disabled aria-label="{{.Name}}"></td>
+        <td>{{.FamilyNumber}}</td>
+        <td>{{.Name}}</td>
+        <td><span class="warning-text">{{if .InvalidEmail}}{{$L.T "children.payer_email_invalid" .InvalidEmail}}{{else}}{{$L.T "children.payer_email_missing"}}{{end}}</span></td>
+      </tr>
+      {{end}}
+    {{end}}
+      <tr id="no-result" hidden><td colspan="4" class="muted">{{$L.T "children.no_result"}}</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="actions">
+    <button type="submit">{{$L.T "children.continue"}}</button>
+  </div>
+</form>
+{{else}}
+<p>{{$L.T "children.empty"}}</p>
+<p><a class="button" href="/import">{{$L.T "home.import_button"}}</a></p>
+{{end}}
+{{end}}{{end}}
