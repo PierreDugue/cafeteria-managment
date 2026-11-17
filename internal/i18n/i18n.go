@@ -51,6 +51,16 @@ func Load(fsys fs.FS) (*Bundle, error) {
 	return b, nil
 }
 
+// Parse returns the supported language with exactly this code ("fr", "en").
+func Parse(code string) (Lang, bool) {
+	for _, l := range supported {
+		if code == string(l) {
+			return l, true
+		}
+	}
+	return "", false
+}
+
 // Match picks the language from an Accept-Language header value, honoring
 // the browser's preference order (q values). Defaults to French.
 func (b *Bundle) Match(acceptLanguage string) Lang {

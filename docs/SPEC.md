@@ -1,6 +1,6 @@
 # Cafeteria Management — Specification
 
-Status: draft · Last updated: 2026-11-16
+Status: draft · Last updated: 2026-11-17
 
 ## 1. Goal
 
@@ -83,9 +83,9 @@ Excel layout) belongs to exactly one list.
 - **Rename**: a list can be renamed (same name rules). Its entries,
   selection and version are kept.
 - **Delete**: a list can be deleted after a confirmation page that shows
-  how many entries and addresses will be deleted. Its entries and
-  remembered selection are deleted; the import history is kept, with the
-  last name of the list. Other lists and templates are not affected.
+  how many entries and addresses will be deleted. Its entries,
+  remembered selection and "Tolérance" flags (§4.2) are deleted; the
+  import history is kept, with the last name of the list. Other lists and templates are not affected.
 - **Import history** (§4.1) records the list of each import and shows its
   **current** name (after a rename), or its last name followed by
   "(supprimée)" once the list is deleted. Email history (§4.5) records the
@@ -146,6 +146,9 @@ Status: ✅ implemented (`internal/importer`, `internal/store`, `/import` pages)
   N deleted. Deletions are highlighted so the user can cancel.
 - Email history (§4.5), templates and settings are **not** affected by an
   import. History stays readable even after a child or parent is deleted.
+- "Tolérance" flags (§4.2) of the list are kept for the family numbers
+  still in the file and removed for the others; the preview shows how many
+  are removed.
 - Keep a record of each import (date, file name, list, counts). The history
   shows the current name of the list, or its last name followed by
   "(supprimée)" if the list was deleted (§4.0).
@@ -272,6 +275,30 @@ a notice gives their number. The server refuses a selection that contains
 one. An invalid payer email in a family that also has a valid one gives
 that family an extra, unselectable row.
 
+**Tolérance** (family data only; plan `docs/plans/007-tolerance.md`,
+confirmed by the user 2026-11-17):
+
+- Each family has a **"Tolérance"** checkbox set by the user: **one flag
+  per family number** of the list (a family with two payer emails, so two
+  rows, has one flag). The checkbox is on the family's first row; every row
+  of a flagged family has a **red background**. A family whose only entry
+  has no valid email can be flagged too.
+- The flag is **remembered** in the database, per list (the same family in
+  two lists has two independent flags). It is saved at once when ticked
+  (a "save" button without JavaScript). It is separate from the selection:
+  it never changes the selection, the counter or a sending, and is shown
+  nowhere else (not in emails, compose or history).
+- **Sorting**: a click on the "Tolérance" header shows the flagged
+  families first (each group in the usual order), and again goes back to
+  the usual order. Families stay together; the sort is not remembered.
+- **Re-import** (§4.0, §4.1): the flag lives as long as the list has that
+  family number. A family still in the file keeps its flag (even if its
+  payer email or billing name changed); a family number no longer in the
+  file loses its flag with its entries. The preview says how many flags
+  will be removed and marks those families in the deleted entries.
+- Excel parent/child lists have no family number, so no "Tolérance"
+  column.
+
 **Stale selection** (plan 003, confirmed 2026-11-16): the selection is tied
 to the data version, sent with the form. With several lists (§4.0) this is
 the version of the **selected list** (its last import ID): importing into
@@ -381,7 +408,7 @@ only). Decisions confirmed by the user, 2026-11-16.
   normally, the email in flight is finished and recorded first.
 - If the email account cannot send at all (not signed in, access revoked),
   the batch stops with that reason and nothing is marked failed; the user
-  resumes after fixing the account (providers come in milestones 6 / 6b).
+  resumes after fixing the account (the real provider comes in milestone 6).
 - **Test mode** (milestone 5b): the only sender until Microsoft 365 is
   added. It sends nothing and only records the emails in the history (no
   `.eml` files). It cannot be missed: a banner on the confirmation and
@@ -408,15 +435,28 @@ Status: plan `docs/plans/005-sending.md` approved.
 
 ### 4.6 Settings
 
-- **Email account**, with a provider choice:
-  - Outlook / Microsoft 365 (default)
-  - Gmail
-  - Other (custom SMTP: host, port, TLS mode, username)
-- Sender name and sender address.
-- "Send test email" button.
-- Interface language.
+Status: plan `docs/plans/006-settings.md` approved (2026-11-17).
 
-- in Selection: add a checkbox "Tolérence", with red background. Persiste this value.
+A **"Paramètres"** page (nav item), plain form. Settings are stored in the
+database (§7), so they survive a restart and are backed up with `app.db`.
+Secrets never go there (§8).
+
+Now (plan 006):
+
+- **Interface language**: "Automatique (langue du navigateur : …)"
+  (default), "Français" or "English" (§6).
+- **Sending** (read-only): how emails are sent today. In test mode
+  (§4.4) the page shows the test-mode banner and says the email account
+  will be chosen here once real sending exists.
+
+With the real sending (milestone 6, Microsoft 365, §5.1), later:
+
+- "Se connecter avec Microsoft", and the connected account shown (the
+  sender is that account: no sender name or address to set).
+- "Envoyer un email de test" button.
+
+SMTP providers (Gmail, custom server) and their fields are not planned for
+now (§5.4, §12).
 
 ## 5. Email providers
 
@@ -425,8 +465,8 @@ The main account is a **Microsoft 365 work account** (Exchange Online).
 | Provider | How it sends | Authentication |
 |---|---|---|
 | Microsoft 365 (default) | Microsoft Graph API, `POST /me/sendMail` | OAuth2, "Sign in with Microsoft" |
-| Gmail | SMTP `smtp.gmail.com:587` (STARTTLS) | App password (requires 2FA) |
-| Custom SMTP | user-defined host/port/TLS | username + password |
+| ~~Gmail~~ (not planned, §12) | SMTP `smtp.gmail.com:587` (STARTTLS) | App password (requires 2FA) |
+| ~~Custom SMTP~~ (not planned, §12) | user-defined host/port/TLS | username + password |
 
 ### 5.1 Microsoft 365 via Microsoft Graph
 
@@ -457,7 +497,11 @@ the user's Outlook **Sent Items** folder.
 
 ### 5.2 Other providers (SMTP)
 
-Gmail and custom servers use SMTP with `github.com/wneessen/go-mail`
+**Not planned for now** (decided 2026-11-17, §12): §5.4 rules out sending
+work emails through a personal account (Gmail) and password SMTP login to
+Microsoft 365, and no approved SMTP relay is known. Kept for reference:
+
+Gmail and custom servers would use SMTP with `github.com/wneessen/go-mail`
 (correct encoding of accents, STARTTLS, connection reuse).
 Gmail limit: about 500 emails/day for a personal account.
 
@@ -475,7 +519,7 @@ Package `internal/mailer` owns the `Sender` interface and the sending queue
   email was not sent) and `ErrAccount` (the account cannot send at all).
   Any other error fails that email only.
 - Implementations: `TestSender` (milestone 5b, sends nothing), then
-  `graphSender` (6) and `smtpSender` (6b). The queue, history and UI only
+  `graphSender` (6). The queue, history and UI only
   know the interface, so providers are added without touching the rest of
   the app.
 - The queue is one goroutine; the database is the queue (messages
@@ -483,13 +527,102 @@ Package `internal/mailer` owns the `Sender` interface and the sending queue
   twice by itself across a restart.
 - Tests use a fake sender; no real email is ever sent from tests.
 
+### 5.4 Workarounds without app registration
+
+Status: specified (2026-11-17), not implemented. Which option to build first
+depends on the open question below.
+
+**Context**: the account is confirmed to be **Microsoft 365**
+(`ville-nice.fr`: MX `*.mail.protection.outlook.com`, `MS=` verification
+record, autodiscover at `autodiscover.outlook.com`). The app is not an
+officially approved application, so registering it in the organization's
+Entra ID (§5.1) is not possible for now. Until it is, the app prepares the
+emails and the user sends them with **tools already allowed**: Word,
+Outlook (classic or web).
+
+**Ruled out**: anything that gets around the organization's controls, such
+as reusing another application's Microsoft client ID, password-based SMTP
+login to Microsoft 365, or sending work emails through a personal account.
+These would bypass the employer's security rules and route residents'
+personal data through unapproved channels.
+
+The selection (§4.2), placeholders and preview (§4.3) stay exactly as they
+are; each option below replaces only the final "send" step (§4.4).
+
+#### Option 1 — Export for Word mail merge (publipostage)
+
+- On the compose page, **"Exporter pour publipostage"** saves an `.xlsx`
+  file with one row per email of the current selection, after the usual
+  checks (§4.3: no unknown placeholder; §4.0 / §4.2: current list and
+  version; entries without a valid email left out). Columns: email address,
+  name (`{{parent_name}}` value), family number(s) (`{{family_number}}`
+  value), plus the rendered subject and body.
+- The user then runs Word: **Publipostage → Démarrer la fusion → Messages
+  électroniques**, picks the file, inserts the fields, and **Terminer et
+  fusionner → Envoyer des messages électroniques**. Outlook sends one email
+  per row, from the user's own address; they appear in "Éléments envoyés".
+- The history (§4.5) records the export (date, list, number of rows) as a
+  batch with status "exporté", so the user knows what was prepared.
+- **Requires classic Outlook on Windows** (desktop) and desktop Word. Does
+  **not** work with Outlook on the web, the "new Outlook", Word on the web or
+  Outlook for Mac.
+- The exported file contains personal data: the app reminds the user to
+  delete it after use; it is written only where the user saves it.
+
+#### Option 2 — "Ouvrir dans Outlook", one click per recipient
+
+- On a page listing the rendered emails, each recipient has a button that
+  opens a new message **already filled in** (to, subject, body); the user
+  checks it and clicks **Envoyer** in Outlook.
+- Outlook on the web: the official compose link
+  `https://outlook.office.com/mail/deeplink/compose?to=…&subject=…&body=…`
+  (all values URL-encoded). Classic or new Outlook, Outlook for Mac: a
+  `mailto:` link with the same fields.
+- The app marks each recipient "ouvert dans Outlook" (stored in the
+  history, §4.5), so the user can stop and continue later.
+- **Limits**:
+  - Long bodies may be cut by the link length (about 2,000 characters);
+    the app warns before opening when a link is too long.
+  - The address and text are in the link, so they end up in the browser
+    history (acceptable on the user's work computer; stated on the page).
+  - It opens a new tab, which needs adapting if the app later runs in a
+    Wails window (§9.1).
+- Works with **every** Outlook, including the web version.
+
+#### Option 3 — One email, all recipients in hidden copy (Cci)
+
+- For messages that need no personalization (general announcements), the
+  app shows the selected addresses ready to copy, separated by `;`, in
+  groups of at most **500** (usual Outlook limit per message), to paste in
+  the **Cci** field. Placeholders are refused in this mode.
+- Addresses stay hidden from each other. Works with every Outlook.
+
+#### Option 4 — Official approval, later
+
+The app runs only on the user's computer, sends nothing to the internet
+except the emails, and stores only family number, billing name and payer
+email. With the user's manager and the city's data protection officer
+(DPO), this may be enough to get it approved; then §5.1 (Graph) applies
+unchanged, with the existing test mode and queue (plan 005).
+
+**Recommendation**: with classic Outlook available, build option 1, plus
+option 3. With only Outlook on the web (or the new Outlook / Mac), build
+option 2, plus option 3.
+
+**Open question**: which Outlook is available on the work computer: classic
+Outlook for Windows, the new Outlook, Outlook on the web only, or Outlook
+for Mac?
+
 ## 6. Localization
 
 - French at launch, English as second language; more languages possible.
 - All UI strings come from translation files (`fr.json`, `en.json`) embedded in
   the binary. No hard-coded text in templates.
-- Language selected in settings, defaulting to the system/browser language,
-  falling back to French.
+- Language chosen in Settings (§4.6, plan 006): "Automatique" (default:
+  the browser's language, i.e. the system's in a desktop window),
+  "Français" or "English". Automatic falls back to French. The choice is
+  stored in the database; a stored language that is no longer supported
+  counts as automatic.
 - Email content is written by the user, so it is not translated. The joining
   word of placeholders that list several values (in family data `{{parent_name}}`
   and `{{family_number}}`: "et" / "and")
@@ -554,8 +687,16 @@ message_children  message_id (ON DELETE CASCADE), position, child_id
                (nullable, ON DELETE SET NULL), child_name (child name or
                billing name, copy), family_number (copy)
                -- primary key (message_id, position); index on child_id
-settings       key, value
+settings       key (PK), value, updated_at
+               -- keys: language ('' = automatic, 'fr', 'en'); never secrets
+tolerances     list_id (ON DELETE CASCADE), family_number (not ''),
+               created_at; primary key (list_id, family_number)
+               -- "Tolérance" flags (§4.2); an import removes the flags of
+               --   family numbers the list no longer has
 ```
+
+`settings` comes with migration 007 (plan 006), `tolerances` with
+migration 008 (plan 007).
 
 The `batches`, `messages` and `message_children` tables come with migration
 006 (plan 005). Batch counts are computed from `messages`, never stored.
@@ -573,8 +714,11 @@ The indexes on `messages.parent_id` and `message_children.child_id` keep the
 
 - Server listens on `127.0.0.1` only.
 - Children's data never leaves the computer except inside the emails sent.
-- Secrets (SMTP password, OAuth refresh token) stored in the OS keychain
-  (macOS Keychain, Windows Credential Manager), not in the database.
+- Secrets (OAuth refresh token) stored in the OS keychain
+  (macOS Keychain, Windows Credential Manager), not in the database (not
+  in `settings` either).
+- "Tolérance" flags (§4.2) are personal data: logs carry counts only,
+  never family numbers.
 - Email history (names, addresses, texts, provider error texts) lives in the
   database only. Logs carry IDs, counts and error codes only: never names,
   addresses, subjects, bodies or provider error texts. URLs carry IDs only.
@@ -590,7 +734,7 @@ The indexes on `messages.parent_id` and `message_children.child_id` keep the
 | Excel | `github.com/xuri/excelize/v2` |
 | Database | SQLite via `modernc.org/sqlite` (pure Go, no CGO) |
 | Email (Microsoft 365) | Microsoft Graph `sendMail` over `net/http` |
-| Email (SMTP) | `github.com/wneessen/go-mail` |
+| Email (SMTP) | `github.com/wneessen/go-mail` (not planned for now, §5.2) |
 | OAuth2 | `golang.org/x/oauth2` (authorization code + PKCE) |
 | Secrets | `github.com/zalando/go-keyring` |
 
@@ -627,9 +771,11 @@ The app starts as a browser tab. It may later run in its own window with
 
 1. Exact Excel layout: one row per child? Can a child have two parents / two
    emails? Extra columns (class, etc.)? → a sample file with fake data is needed.
-2. ~~Outlook.com or Microsoft 365?~~ → Microsoft 365 work account.
-   Still open: can users approve new apps themselves in this organization, or
-   does IT need to grant admin consent / register the app? (Ask IT.)
+2. ~~Outlook.com or Microsoft 365?~~ → Microsoft 365 work account
+   (`ville-nice.fr`, confirmed by its DNS records). App registration is not
+   possible for now (the app is not officially approved): see the
+   workarounds in §5.4. Still open: which Outlook is on the work computer
+   (§5.4).
 3. Should attachments be supported (e.g. a PDF menu)?
 4. Should the app sign and notarize the macOS binary (avoids security warnings,
    requires an Apple developer account)?
@@ -647,8 +793,11 @@ The app starts as a browser tab. It may later run in its own window with
    - 5a. **Compose** — templates, placeholders, preview (plan 003). ✅
    - 5b. **Send** — confirmation, sending queue with a test-mode sender
      (records only), stop / resume / retry, history (plan 005). ✅
-6. **Microsoft 365** — Microsoft sign-in and Graph sending.
-6b. **SMTP** — Gmail / custom SMTP sender.
+5c. **Send without registration** — workaround options of §5.4 (mail
+   merge export, "Ouvrir dans Outlook", Cci), depending on the Outlook
+   available.
+6. **Microsoft 365** — Microsoft sign-in and Graph sending (only once the
+   app is approved and registered, §5.4 option 4).
 7. **i18n** — FR/EN translation files and language switch.
 8. **Packaging** — Windows/macOS builds, open browser on start, app icon.
 
@@ -658,3 +807,6 @@ The app starts as a browser tab. It may later run in its own window with
 - Hosting the app online.
 - Replies / reading the inbox.
 - Scheduling emails for later.
+- SMTP sending (Gmail, custom SMTP server) and its settings (host, port,
+  TLS mode, username, sender name and address): not for now (§5.2, §5.4;
+  decided 2026-11-17). Could come back if an approved SMTP relay exists.

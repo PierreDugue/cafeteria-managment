@@ -1,0 +1,26 @@
+{{define "title"}}{{.L.T "settings.title"}}{{end}}
+{{define "content"}}{{$L := .L}}{{with .Data}}
+<h1>{{$L.T "settings.title"}}</h1>
+
+{{if .Error}}<div class="alert alert-error" role="alert">{{.Error}}</div>{{end}}
+{{if .Notice}}<div class="alert alert-success" role="status">{{.Notice}}</div>{{end}}
+
+<form method="post" action="/settings" class="card">
+  <fieldset class="field">
+    <legend>{{$L.T "settings.language.legend"}}</legend>
+    <p><label><input type="radio" name="language" value="auto" {{if eq .Language "auto"}}checked{{end}}> {{$L.T "settings.language.auto" .BrowserLang}}</label></p>
+    <p><label><input type="radio" name="language" value="fr" {{if eq .Language "fr"}}checked{{end}}> {{$L.T "settings.language.fr"}}</label></p>
+    <p><label><input type="radio" name="language" value="en" {{if eq .Language "en"}}checked{{end}}> {{$L.T "settings.language.en"}}</label></p>
+    <p class="help">{{$L.T "settings.language.help"}}</p>
+  </fieldset>
+  <div class="actions">
+    <button type="submit">{{$L.T "lists.save"}}</button>
+  </div>
+</form>
+
+<section class="card">
+  <h2>{{$L.T "settings.sending.title"}}</h2>
+  {{if .Test}}<div class="alert test-banner" role="status">{{$L.T "send.test_banner"}}</div>{{end}}
+  <p>{{$L.T "settings.sending.later"}}</p>
+</section>
+{{end}}{{end}}

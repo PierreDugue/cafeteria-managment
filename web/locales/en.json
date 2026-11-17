@@ -272,5 +272,16 @@
   "history.message_title": "Email sent",
   "history.back": "Back to the sending",
   "history.error.not_found": "This sending does not exist.",
-  "home.interrupted": "%d interrupted sending(s): see the history."
+  "home.interrupted": "%d interrupted sending(s): see the history.",
+  "nav.settings": "Settings",
+  "settings.title": "Settings",
+  "settings.language.legend": "Interface language",
+  "settings.language.auto": "Automatic (browser language: %s)",
+  "settings.language.fr": "Français",
+  "settings.language.en": "English",
+  "settings.language.help": "The chosen language also sets the word “and” in placeholders that list several values.",
+  "settings.sending.title": "Sending emails",
+  "settings.sending.later": "The email account used for sending will be chosen here once real sending is available.",
+  "settings.saved": "Settings saved.",
+  "settings.error.invalid": "Invalid form: nothing was saved."
 }

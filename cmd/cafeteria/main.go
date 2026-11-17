@@ -63,7 +63,7 @@ func run() error {
 		return fmt.Errorf("recover interrupted sendings: %w", err)
 	}
 
-	srv, err := server.New(version, st, q)
+	srv, err := server.New(ctx, version, st, q)
 	if err != nil {
 		return err
 	}

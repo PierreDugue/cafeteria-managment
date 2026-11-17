@@ -37,7 +37,7 @@ func newTestServerAt(t *testing.T) (*Server, *store.Store, string) {
 	}
 	t.Cleanup(func() { st.Close() })
 
-	s, err := New("test", st, &fakeQueue{provider: mailer.ProviderTest, interval: 500 * time.Millisecond})
+	s, err := New(context.Background(), "test", st, &fakeQueue{provider: mailer.ProviderTest, interval: 500 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}

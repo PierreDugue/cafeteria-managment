@@ -3,6 +3,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -10,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"cafeteria-management/internal/i18n"
@@ -19,7 +21,7 @@ import (
 )
 
 // pageNames are the templates in web/templates rendered inside layout.html.
-var pageNames = []string{"home", "import", "import_preview", "children", "compose", "templates", "template_form", "template_delete", "list_rename", "list_delete", "send_confirm", "history", "history_batch", "history_message"}
+var pageNames = []string{"home", "import", "import_preview", "children", "compose", "templates", "template_form", "template_delete", "list_rename", "list_delete", "send_confirm", "history", "history_batch", "history_message", "settings"}
 
 // Server serves the web UI.
 type Server struct {
@@ -29,16 +31,23 @@ type Server struct {
 	pages   map[string]*template.Template
 	pending *pendingImports
 	queue   queue
+	langMu  sync.RWMutex
+	lang    i18n.Lang // "" follows the browser; loaded at start, see handleSettingsSave
 	handler http.Handler
 }
 
-// New builds the server. st must stay open while the server runs.
-func New(version string, st *store.Store, q queue) (*Server, error) {
+// New builds the server and loads the settings. st must stay open while the
+// server runs.
+func New(ctx context.Context, version string, st *store.Store, q queue) (*Server, error) {
 	bundle, err := i18n.Load(web.FS)
 	if err != nil {
 		return nil, err
 	}
 	pages, err := parsePages()
+	if err != nil {
+		return nil, err
+	}
+	settings, err := st.Settings(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -50,6 +59,10 @@ func New(version string, st *store.Store, q queue) (*Server, error) {
 		pages:   pages,
 		pending: newPendingImports(30 * time.Minute),
 		queue:   q,
+	}
+	// An unsupported stored value counts as automatic.
+	if l, ok := i18n.Parse(settings.Language); ok {
+		s.lang = l
 	}
 
 	mux := http.NewServeMux()
@@ -76,6 +89,8 @@ func New(version string, st *store.Store, q queue) (*Server, error) {
 	mux.HandleFunc("POST /history/{id}/stop", s.handleBatchStop)
 	mux.HandleFunc("POST /history/{id}/resume", s.handleBatchResume)
 	mux.HandleFunc("POST /history/{id}/retry", s.handleBatchRetry)
+	mux.HandleFunc("GET /settings", s.handleSettings)
+	mux.HandleFunc("POST /settings", s.handleSettingsSave)
 	mux.HandleFunc("GET /templates", s.handleTemplates)
 	mux.HandleFunc("GET /templates/new", s.handleTemplateNew)
 	mux.HandleFunc("POST /templates", s.handleTemplateCreate)
@@ -131,6 +146,9 @@ type view struct {
 }
 
 func (s *Server) localizer(r *http.Request) i18n.Localizer {
+	if l := s.language(); l != "" {
+		return s.i18n.Localizer(l)
+	}
 	return s.i18n.Localizer(s.i18n.Match(r.Header.Get("Accept-Language")))
 }
 

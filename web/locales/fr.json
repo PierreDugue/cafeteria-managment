@@ -272,5 +272,16 @@
   "history.message_title": "Email envoyé",
   "history.back": "Retour à l'envoi",
   "history.error.not_found": "Cet envoi n'existe pas.",
-  "home.interrupted": "%d envoi(s) interrompu(s) : voir l'historique."
+  "home.interrupted": "%d envoi(s) interrompu(s) : voir l'historique.",
+  "nav.settings": "Paramètres",
+  "settings.title": "Paramètres",
+  "settings.language.legend": "Langue de l'interface",
+  "settings.language.auto": "Automatique (langue du navigateur : %s)",
+  "settings.language.fr": "Français",
+  "settings.language.en": "English",
+  "settings.language.help": "La langue choisie s'applique aussi au mot « et » des champs qui listent plusieurs valeurs.",
+  "settings.sending.title": "Envoi des emails",
+  "settings.sending.later": "Le compte email utilisé pour l'envoi se choisira ici quand l'envoi réel sera disponible.",
+  "settings.saved": "Paramètres enregistrés.",
+  "settings.error.invalid": "Formulaire invalide : rien n'a été enregistré."
 }

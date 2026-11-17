@@ -37,7 +37,7 @@ func newServerQ(t *testing.T, q *fakeQueue) (*Server, *store.Store) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	s, err := New("test", st, q)
+	s, err := New(context.Background(), "test", st, q)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -119,12 +119,12 @@ func TestMigration006OnV5Database(t *testing.T) {
 	}
 	s.Close()
 
-	// Go back to version 5: remove what 006 created.
+	// Go back to version 5: remove what 006 and 007 created.
 	db, err := sql.Open("sqlite", path+"?_pragma=foreign_keys(1)")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, q := range []string{`DROP TABLE message_children`, `DROP TABLE messages`, `DROP TABLE batches`, `DELETE FROM schema_migrations WHERE version = 6`} {
+	for _, q := range []string{`DROP TABLE message_children`, `DROP TABLE messages`, `DROP TABLE batches`, `DROP TABLE settings`, `DELETE FROM schema_migrations WHERE version IN (6, 7)`} {
 		if _, err := db.Exec(q); err != nil {
 			t.Fatalf("%s: %v", q, err)
 		}
@@ -136,7 +136,7 @@ func TestMigration006OnV5Database(t *testing.T) {
 	db.Close()
 
 	s = openPath(t, path)
-	if err := s.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&v); err != nil || v != 6 {
+	if err := s.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&v); err != nil || v != latestSchemaVersion {
 		t.Errorf("version = %d, %v", v, err)
 	}
 	ls, err := s.Lists(ctx)
@@ -162,10 +162,13 @@ func TestMigration006OnV5Database(t *testing.T) {
 	}
 }
 
-func TestFreshDatabaseIsAtVersion6(t *testing.T) {
+// latestSchemaVersion is the version of the newest migration.
+const latestSchemaVersion = 7
+
+func TestFreshDatabaseIsAtLatestVersion(t *testing.T) {
 	s := openTest(t)
 	var v int
-	if err := s.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&v); err != nil || v != 6 {
+	if err := s.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&v); err != nil || v != latestSchemaVersion {
 		t.Fatalf("version = %d, %v", v, err)
 	}
 }

@@ -86,3 +86,31 @@ func TestMatch(t *testing.T) {
 		}
 	}
 }
+
+func TestParse(t *testing.T) {
+	for code, want := range map[string]bool{
+		"fr": true, "en": true,
+		"": false, "auto": false, "de": false, "FR": false, " fr": false, "fr-FR": false, "fr ": false,
+	} {
+		l, ok := Parse(code)
+		if ok != want || (ok && string(l) != code) || (!ok && l != "") {
+			t.Errorf("Parse(%q) = %q, %v; want ok=%v", code, l, ok, want)
+		}
+	}
+}
+
+func TestSettingsKeysInBothLocales(t *testing.T) {
+	b, err := Load(os.DirFS("../../web"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range supported {
+		for _, k := range []string{"nav.settings", "settings.title", "settings.language.legend", "settings.language.auto",
+			"settings.language.fr", "settings.language.en", "settings.language.help", "settings.sending.title",
+			"settings.sending.later", "settings.saved", "settings.error.invalid"} {
+			if b.msgs[l][k] == "" {
+				t.Errorf("%s: key %q missing or empty", l, k)
+			}
+		}
+	}
+}
