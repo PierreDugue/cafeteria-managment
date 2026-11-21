@@ -15,7 +15,9 @@ minimal FR/EN i18n, child list and selection (§4.2), CSV import of the
 families software export (§4.1.1, plan `docs/plans/002-csv-import.md`),
 email composition with templates and preview (§4.3, plan 003), named
 family lists (§4.0, plan 004), sending in test mode with history (§4.4,
-§4.5, plan 005). Next: Microsoft 365 sending via Graph (milestone 6).
+§4.5, plan 005), settings (§4.6, plan 006), "Tolérance" flags (§4.2,
+plan 007). Next: sending without app registration (§5.4, milestone 5c);
+Microsoft 365 via Graph (plan 008) is on hold until IT approval.
 See the milestones in `docs/SPEC.md` §11.
 
 ## Commands

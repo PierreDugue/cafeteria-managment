@@ -283,5 +283,14 @@
   "settings.sending.title": "Envoi des emails",
   "settings.sending.later": "Le compte email utilisé pour l'envoi se choisira ici quand l'envoi réel sera disponible.",
   "settings.saved": "Paramètres enregistrés.",
-  "settings.error.invalid": "Formulaire invalide : rien n'a été enregistré."
+  "settings.error.invalid": "Formulaire invalide : rien n'a été enregistré.",
+  "children.col.tolerance": "Tolérance",
+  "children.sort_tolerance": "Tolérance (trier)",
+  "children.tolerance_label": "Tolérance pour la famille %s",
+  "children.tolerance_save": "Enregistrer les tolérances",
+  "children.tolerance_saved": "Tolérances enregistrées.",
+  "children.tolerance_error": "La tolérance n'a pas pu être enregistrée. Rechargez la page.",
+  "children.error.tolerance_invalid": "Une famille cochée n'est pas dans cette liste. Rien n'a été enregistré.",
+  "preview.tolerance_removed": "%d famille(s) en tolérance ne sont plus dans le fichier : leur tolérance sera retirée.",
+  "preview.tolerance_mark": "Tolérance"
 }

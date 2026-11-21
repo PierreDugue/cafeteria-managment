@@ -275,8 +275,8 @@ a notice gives their number. The server refuses a selection that contains
 one. An invalid payer email in a family that also has a valid one gives
 that family an extra, unselectable row.
 
-**Tolérance** (family data only; plan `docs/plans/007-tolerance.md`,
-confirmed by the user 2026-11-17):
+**Tolérance** (family data only; ✅ implemented, plan
+`docs/plans/007-tolerance.md`, confirmed by the user 2026-11-17):
 
 - Each family has a **"Tolérance"** checkbox set by the user: **one flag
   per family number** of the list (a family with two payer emails, so two
@@ -406,14 +406,31 @@ only). Decisions confirmed by the user, 2026-11-16.
   marked failed with "état inconnu" (maybe delivered, maybe not): the user
   checks their sent items before retrying it. When the app is closed
   normally, the email in flight is finished and recorded first.
-- If the email account cannot send at all (not signed in, access revoked),
-  the batch stops with that reason and nothing is marked failed; the user
-  resumes after fixing the account (the real provider comes in milestone 6).
-- **Test mode** (milestone 5b): the only sender until Microsoft 365 is
-  added. It sends nothing and only records the emails in the history (no
-  `.eml` files). It cannot be missed: a banner on the confirmation and
-  batch pages, a "Test" badge in the history, and the status "Enregistré
-  (test)" instead of "Envoyé". Each batch records its provider.
+- If the email account cannot send at all (not signed in, session expired,
+  access revoked, or no internet connection: the email surely did not
+  leave), the batch stops with that reason and nothing is marked failed;
+  the user resumes after fixing the account or the connection.
+- **No answer after sending** (milestone 6, plan 008): when the provider may
+  have processed an email but gave no clear answer (timeout or connection
+  lost after the request was sent, server errors 500 / 502 / 504), the
+  email is marked failed with "état inconnu", like an email in flight
+  during a crash. It is **never retried automatically**: the user checks
+  their sent items before retrying it.
+- **Test mode** (milestone 5b): sends nothing and only records the emails in
+  the history (no `.eml` files). It cannot be missed: a banner on the
+  confirmation and batch pages, a "Test" badge in the history, and the
+  status "Enregistré (test)" instead of "Envoyé". Each batch records its
+  provider. Today it is the only sender; with Microsoft 365 (milestone 6,
+  designed in plan 008, on hold) it stays available as the **default
+  sending mode**, chosen in Settings (§4.6).
+- **With several providers** (plan 008, on hold): each batch is sent, also
+  when resumed or retried, with the provider it was confirmed with (a test
+  batch never goes out for real, a Microsoft 365 batch is never "sent" in
+  test mode). If the sending mode changed between the confirmation page and
+  the final click, no batch is created and the confirmation page is shown
+  again. Microsoft 365 mode with no connected account refuses the
+  "Envoyer…" step. The confirmation page shows the sender account
+  ("Envoyé depuis : …") instead of the test banner.
 
 ### 4.5 History
 
@@ -449,11 +466,23 @@ Now (plan 006):
   (§4.4) the page shows the test-mode banner and says the email account
   will be chosen here once real sending exists.
 
-With the real sending (milestone 6, Microsoft 365, §5.1), later:
+With the real sending (milestone 6, Microsoft 365, §5.1; designed in plan
+`docs/plans/008-graph-sending.md`, approved 2026-11-17, **on hold until IT
+approves the app registration**, §5.4 option 4):
 
-- "Se connecter avec Microsoft", and the connected account shown (the
-  sender is that account: no sender name or address to set).
-- "Envoyer un email de test" button.
+- A build without the app registration IDs (§5.1) shows test mode and
+  "L'envoi par Microsoft 365 n'est pas disponible dans cette version".
+- **"Se connecter avec Microsoft"** (Microsoft's sign-in page in the same
+  tab, then back to Settings), and the connected account shown: "Connecté :
+  Nom (adresse)". The sender is that account, the user's own mailbox: no
+  sender name or address to set, no shared mailbox.
+- **"Envoyer un email de test"**: one real email to the connected
+  account's own address only; not recorded in the history.
+- **"Se déconnecter"**: removes the sign-in saved on this computer only
+  (the user stays signed in to Microsoft elsewhere).
+- **Sending mode**: "Mode test" (default) or "Microsoft 365" (real
+  sending). Microsoft 365 can be chosen only with a connected account.
+  Signing in or out never changes the mode: the user chooses.
 
 SMTP providers (Gmail, custom server) and their fields are not planned for
 now (§5.4, §12).
@@ -475,25 +504,65 @@ often disabled by the organization, and Microsoft is retiring password-based
 SMTP login. Graph works with modern sign-in only, and sent emails are saved in
 the user's Outlook **Sent Items** folder.
 
-- **App registration** (once, free) in Microsoft Entra ID:
-  - Platform "Mobile and desktop applications" (public client, no secret).
-  - Redirect URI: `http://localhost` (the app's own local server receives
-    the login response).
-  - Delegated permissions: `Mail.Send`, `User.Read`, `offline_access`.
-- **Sign-in flow**: OAuth2 authorization code with PKCE. The user clicks
-  "Se connecter avec Microsoft" in Settings, signs in on the Microsoft page,
-  and is sent back to the app. The app shows which account is connected.
-- **Tokens**: the refresh token is stored in the OS keychain and refreshed
-  automatically; the user signs in again only if it expires or is revoked.
-- **Sending**: one Graph `sendMail` call per email, with
-  `saveToSentItems: true`. Plain HTTP + `golang.org/x/oauth2`; no Microsoft
-  SDK needed.
+Status: designed in plan `docs/plans/008-graph-sending.md` (approved
+2026-11-17), **on hold**: not implemented until IT approves the app
+registration (§5.4 option 4). Decisions confirmed by the user, 2026-11-17.
+
+- **App registration** (once, free, by IT) in the organization's Microsoft
+  Entra ID, **single tenant**:
+  - Platform "Mobile and desktop applications" (public client, no secret,
+    no certificate; not Web, not SPA). "Allow public client flows" not
+    needed.
+  - Redirect URI exactly `http://localhost/auth/microsoft/callback`,
+    served by the app's own local server. Entra ignores the port of
+    `localhost` redirect URIs, so the app's port can change.
+  - Delegated permissions: `Mail.Send`, `User.Read`, `offline_access`, with
+    admin consent (or user consent allowed). The full checklist for IT is
+    at the end of plan 008.
+- **Client ID and tenant ID** are built into the release binary
+  (`-ldflags`, from repository variables; they are public identifiers, not
+  secrets), with command-line flags to override them for development. No
+  Settings field. Without them, the app offers test mode only.
+- **Sign-in flow**: OAuth2 authorization code with PKCE (S256) and a
+  one-time `state`, both kept in memory for 10 minutes. The user clicks "Se
+  connecter avec Microsoft" in Settings, signs in on the Microsoft page in
+  the same tab (`prompt=select_account`), and is sent back to the app. The
+  sign-in is refused if `Mail.Send` was not granted. Device code flow is
+  not used (often blocked by organizations, worse for the user); neither
+  MSAL nor a Microsoft SDK is used.
+- **Tokens**: the refresh token (with the account's name and address) is
+  stored in the OS keychain only (§8); the access token stays in memory.
+  The token is refreshed automatically before it expires, and the new
+  refresh token Microsoft returns is saved each time. If Microsoft refuses
+  the refresh (expired, revoked, new sign-in requirement), the saved
+  sign-in is removed and the user signs in again; a sending in progress
+  stops (§4.4).
+- **Sending**: one Graph `POST /me/sendMail` call per email, plain-text
+  body, recipient in the `emailAddress` name / address fields,
+  `saveToSentItems: true` (emails appear in "Éléments envoyés"). Plain HTTP
+  + `golang.org/x/oauth2`.
+- **Errors**:
+
+  | Graph / network result | Effect |
+  |---|---|
+  | 202 Accepted | sent |
+  | 429, 503 | wait (`Retry-After`, else 60 s), then retry (§4.4) |
+  | 401 | refresh the token and retry once, then "account cannot send" |
+  | 403, not signed in, refresh refused | "account cannot send": the batch stops, nothing failed |
+  | request not sent (no network, DNS, connection refused) | same: the batch stops, resumed by hand |
+  | 400 (malformed address…), other 4xx | this email fails, the batch goes on |
+  | 500, 502, 504, no answer after the request was sent | this email fails with "état inconnu", never retried automatically |
+
+  Graph accepts a well-formed address that has no mailbox; the
+  non-delivery report arrives later in the user's Outlook inbox, which the
+  app does not read (§12).
 - **Limits** (Exchange Online): about 30 messages per minute and
-  10,000 recipients per day. The sending queue waits ~2 s between emails and
+  10,000 recipients per day. The sending queue waits 2 s between emails and
   backs off on HTTP 429 (`Retry-After`).
 - **Admin consent risk**: the organization may block users from approving
-  new apps. Then an IT admin must either grant consent once or register the
-  app in the organization's own tenant (see §10).
+  new apps. Then an IT admin must grant consent once (see §10).
+- **Wails window** (§9.1): the sign-in would then need the system browser
+  and the app's own loopback listener; not designed yet.
 
 ### 5.2 Other providers (SMTP)
 
@@ -517,11 +586,18 @@ Package `internal/mailer` owns the `Sender` interface and the sending queue
   connected account.
 - Errors: `RateLimitError` (provider asks to wait, with `RetryAfter`; the
   email was not sent) and `ErrAccount` (the account cannot send at all).
-  Any other error fails that email only.
-- Implementations: `TestSender` (milestone 5b, sends nothing), then
-  `graphSender` (6). The queue, history and UI only
-  know the interface, so providers are added without touching the rest of
-  the app.
+  Any other error fails that email only. Plan 008 (on hold) adds
+  `ErrUncertain` (the provider may have sent it: failed with code
+  `unknown`, never retried automatically).
+- Implementations: `TestSender` (milestone 5b, sends nothing), then the
+  Graph sender (6, plan 008: `microsoft.Client` in a new
+  `internal/microsoft` package, with chunked keychain storage in
+  `internal/keychain`). The queue, history and UI only know the
+  interface, so providers are added without touching the rest of the app.
+- With plan 008 the queue gets one `Provider{Sender, Interval}` per
+  provider name (`test`, `graph`) and sends each message with its batch's
+  provider (§4.4); a batch whose provider is not available in this run
+  stops like an account that cannot send.
 - The queue is one goroutine; the database is the queue (messages
   `pending` → `sending` → `sent` / `failed`), so nothing is lost or sent
   twice by itself across a restart.
@@ -603,7 +679,10 @@ The app runs only on the user's computer, sends nothing to the internet
 except the emails, and stores only family number, billing name and payer
 email. With the user's manager and the city's data protection officer
 (DPO), this may be enough to get it approved; then §5.1 (Graph) applies
-unchanged, with the existing test mode and queue (plan 005).
+unchanged, with the existing test mode and queue (plan 005). The Graph
+sending is designed and approved (plan `docs/plans/008-graph-sending.md`)
+and waits for this approval; the list of what IT must set up is at the end
+of that plan.
 
 **Recommendation**: with classic Outlook available, build option 1, plus
 option 3. With only Outlook on the web (or the new Outlook / Mac), build
@@ -689,6 +768,8 @@ message_children  message_id (ON DELETE CASCADE), position, child_id
                -- primary key (message_id, position); index on child_id
 settings       key (PK), value, updated_at
                -- keys: language ('' = automatic, 'fr', 'en'); never secrets
+               -- plan 008 (on hold) adds key provider ('' = test mode,
+               --   'graph' = Microsoft 365); no migration needed
 tolerances     list_id (ON DELETE CASCADE), family_number (not ''),
                created_at; primary key (list_id, family_number)
                -- "Tolérance" flags (§4.2); an import removes the flags of
@@ -716,7 +797,17 @@ The indexes on `messages.parent_id` and `message_children.child_id` keep the
 - Children's data never leaves the computer except inside the emails sent.
 - Secrets (OAuth refresh token) stored in the OS keychain
   (macOS Keychain, Windows Credential Manager), not in the database (not
-  in `settings` either).
+  in `settings` either). With Microsoft 365 (plan 008, on hold): one
+  keychain secret under the service `CafeteriaManagement` holds the
+  refresh token and the connected account's name and address, split into
+  chunks small enough for every OS (Windows refuses secrets over 2,560
+  bytes) and checked with a hash; a damaged secret counts as signed out.
+  The access token lives in memory only. Sign-out deletes the keychain
+  secret on this computer only (no revocation at Microsoft).
+- Never logged: tokens, the authorization code, `state` and PKCE verifier,
+  the account's name or address, Microsoft error texts, URLs with their
+  query string. Logged: events, OAuth / AADSTS error codes, HTTP status
+  codes, IDs.
 - "Tolérance" flags (§4.2) are personal data: logs carry counts only,
   never family numbers.
 - Email history (names, addresses, texts, provider error texts) lives in the
@@ -735,8 +826,8 @@ The indexes on `messages.parent_id` and `message_children.child_id` keep the
 | Database | SQLite via `modernc.org/sqlite` (pure Go, no CGO) |
 | Email (Microsoft 365) | Microsoft Graph `sendMail` over `net/http` |
 | Email (SMTP) | `github.com/wneessen/go-mail` (not planned for now, §5.2) |
-| OAuth2 | `golang.org/x/oauth2` (authorization code + PKCE) |
-| Secrets | `github.com/zalando/go-keyring` |
+| OAuth2 | `golang.org/x/oauth2` (authorization code + PKCE; v0.38.0 checked for plan 008) |
+| Secrets | `github.com/zalando/go-keyring` (pure Go: `/usr/bin/security` on macOS, Credential Manager via `danieljoos/wincred` on Windows; v0.2.8 checked to cross-compile with `CGO_ENABLED=0` for plan 008) |
 
 Project layout:
 
@@ -775,7 +866,11 @@ The app starts as a browser tab. It may later run in its own window with
    (`ville-nice.fr`, confirmed by its DNS records). App registration is not
    possible for now (the app is not officially approved): see the
    workarounds in §5.4. Still open: which Outlook is on the work computer
-   (§5.4).
+   (§5.4). For the approval request, the app registration IT would have to
+   create (single tenant, "Mobile and desktop" redirect URI, delegated
+   `Mail.Send` / `User.Read` / `offline_access` with admin consent, client
+   and tenant IDs to send back, Conditional Access and external sending
+   checks) is listed at the end of plan `docs/plans/008-graph-sending.md`.
 3. Should attachments be supported (e.g. a PDF menu)?
 4. Should the app sign and notarize the macOS binary (avoids security warnings,
    requires an Apple developer account)?
@@ -797,7 +892,9 @@ The app starts as a browser tab. It may later run in its own window with
    merge export, "Ouvrir dans Outlook", Cci), depending on the Outlook
    available.
 6. **Microsoft 365** — Microsoft sign-in and Graph sending (only once the
-   app is approved and registered, §5.4 option 4).
+   app is approved and registered, §5.4 option 4). Designed and approved
+   (plan 008, 2026-11-17), **on hold** until IT approves the app
+   registration.
 7. **i18n** — FR/EN translation files and language switch.
 8. **Packaging** — Windows/macOS builds, open browser on start, app icon.
 

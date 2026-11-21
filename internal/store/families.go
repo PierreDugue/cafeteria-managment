@@ -42,6 +42,9 @@ type DeletedChild struct {
 	ParentName   string
 	Email        string
 	FamilyNumber string
+	// Tolerance is true when the "Tolérance" flag of this entry's family is
+	// removed by the import (the family number is no longer in the list).
+	Tolerance bool
 }
 
 // ErrStaleImport is returned when the data changed since the preview the
@@ -76,6 +79,9 @@ type ImportSummary struct {
 	Parents         Changes
 	Children        Changes
 	DeletedChildren []DeletedChild // sorted by child name
+	// TolerancesRemoved counts the "Tolérance" flags removed because their
+	// family number is no longer in the list (SPEC §4.1, §4.2).
+	TolerancesRemoved int
 }
 
 // ImportFamilies replaces the parents and children of one list with rows
@@ -268,6 +274,23 @@ func (s *Store) ImportFamilies(ctx context.Context, req ImportRequest) (ImportSu
 		sum.Parents.Deleted++
 	}
 
+	// A flag lives as long as the list has its family number.
+	gone, err := goneTolerances(ctx, tx, listID)
+	if err != nil {
+		return sum, err
+	}
+	if len(gone) > 0 {
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM tolerances WHERE list_id = ? AND family_number NOT IN (SELECT family_number FROM children WHERE list_id = ?)`,
+			listID, listID); err != nil {
+			return sum, fmt.Errorf("delete tolerances: %w", err)
+		}
+		sum.TolerancesRemoved = len(gone)
+		for i := range sum.DeletedChildren {
+			sum.DeletedChildren[i].Tolerance = gone[sum.DeletedChildren[i].FamilyNumber]
+		}
+	}
+
 	sort.Slice(sum.DeletedChildren, func(i, j int) bool {
 		a, b := sum.DeletedChildren[i], sum.DeletedChildren[j]
 		if ka, kb := textnorm.Key(a.ChildName), textnorm.Key(b.ChildName); ka != kb {
@@ -304,6 +327,28 @@ func (s *Store) ImportFamilies(ctx context.Context, req ImportRequest) (ImportSu
 		return sum, fmt.Errorf("commit import: %w", err)
 	}
 	return sum, nil
+}
+
+// goneTolerances returns the flagged family numbers of the list that no
+// entry of the list has any more.
+func goneTolerances(ctx context.Context, tx *sql.Tx, listID int64) (map[string]bool, error) {
+	rows, err := tx.QueryContext(ctx,
+		`SELECT family_number FROM tolerances WHERE list_id = ? AND family_number NOT IN (SELECT family_number FROM children WHERE list_id = ?)`,
+		listID, listID)
+	if err != nil {
+		return nil, fmt.Errorf("load tolerances: %w", err)
+	}
+	defer rows.Close()
+
+	out := map[string]bool{}
+	for rows.Next() {
+		var f string
+		if err := rows.Scan(&f); err != nil {
+			return nil, err
+		}
+		out[f] = true
+	}
+	return out, rows.Err()
 }
 
 type parentRec struct {

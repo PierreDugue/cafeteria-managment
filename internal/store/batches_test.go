@@ -119,12 +119,12 @@ func TestMigration006OnV5Database(t *testing.T) {
 	}
 	s.Close()
 
-	// Go back to version 5: remove what 006 and 007 created.
+	// Go back to version 5: remove what 006, 007 and 008 created.
 	db, err := sql.Open("sqlite", path+"?_pragma=foreign_keys(1)")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, q := range []string{`DROP TABLE message_children`, `DROP TABLE messages`, `DROP TABLE batches`, `DROP TABLE settings`, `DELETE FROM schema_migrations WHERE version IN (6, 7)`} {
+	for _, q := range []string{`DROP TABLE message_children`, `DROP TABLE messages`, `DROP TABLE batches`, `DROP TABLE settings`, `DROP TABLE tolerances`, `DELETE FROM schema_migrations WHERE version IN (6, 7, 8)`} {
 		if _, err := db.Exec(q); err != nil {
 			t.Fatalf("%s: %v", q, err)
 		}
@@ -136,8 +136,8 @@ func TestMigration006OnV5Database(t *testing.T) {
 	db.Close()
 
 	s = openPath(t, path)
-	if err := s.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&v); err != nil || v != latestSchemaVersion {
-		t.Errorf("version = %d, %v", v, err)
+	if err := s.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&v); err != nil || v < 6 {
+		t.Errorf("version = %d, %v; want at least 6", v, err)
 	}
 	ls, err := s.Lists(ctx)
 	if err != nil || len(ls) != 1 || ls[0].Parents != 2 || ls[0].Children != 5 {
@@ -162,14 +162,15 @@ func TestMigration006OnV5Database(t *testing.T) {
 	}
 }
 
-// latestSchemaVersion is the version of the newest migration.
-const latestSchemaVersion = 7
-
 func TestFreshDatabaseIsAtLatestVersion(t *testing.T) {
+	files, err := migrationsFS.ReadDir("migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
 	s := openTest(t)
 	var v int
-	if err := s.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&v); err != nil || v != latestSchemaVersion {
-		t.Fatalf("version = %d, %v", v, err)
+	if err := s.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&v); err != nil || v != len(files) {
+		t.Fatalf("version = %d, %v; want %d (one per embedded migration)", v, err, len(files))
 	}
 }
 

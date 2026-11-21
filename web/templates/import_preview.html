@@ -59,13 +59,14 @@
 <section class="card card-warning">
   <h2>{{if .Result.Families}}{{$L.T "preview.deleted_title_families"}}{{else}}{{$L.T "preview.deleted_title"}}{{end}} ({{len .Summary.DeletedChildren}})</h2>
   <p>{{$L.T "preview.deleted_help"}}</p>
+  {{if .Summary.TolerancesRemoved}}<p class="danger">{{$L.T "preview.tolerance_removed" .Summary.TolerancesRemoved}}</p>{{end}}
   <div class="table-wrap">
   <table>
     {{if .Result.Families}}
     <thead><tr><th>{{$L.T "preview.col.family_number"}}</th><th>{{$L.T "preview.col.billing_name"}}</th><th>{{$L.T "preview.col.email"}}</th></tr></thead>
     <tbody>
     {{range .Summary.DeletedChildren}}
-      <tr><td>{{.FamilyNumber}}</td><td>{{.ChildName}}</td><td>{{if .Email}}{{.Email}}{{else}}{{$L.T "common.no_valid_email"}}{{end}}</td></tr>
+      <tr><td>{{.FamilyNumber}}{{if .Tolerance}} <span class="badge badge-tolerance">{{$L.T "preview.tolerance_mark"}}</span>{{end}}</td><td>{{.ChildName}}</td><td>{{if .Email}}{{.Email}}{{else}}{{$L.T "common.no_valid_email"}}{{end}}</td></tr>
     {{end}}
     {{else}}
     <thead><tr><th>{{$L.T "preview.col.child"}}</th><th>{{$L.T "preview.col.parent"}}</th><th>{{$L.T "preview.col.email"}}</th></tr></thead>

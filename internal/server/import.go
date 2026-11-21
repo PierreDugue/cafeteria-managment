@@ -316,7 +316,8 @@ func (s *Server) handleImportConfirm(w http.ResponseWriter, r *http.Request) {
 	// IDs and counts only: no list names, names or emails in logs.
 	slog.Info("import saved", "id", sum.ImportID, "list_id", sum.ListID,
 		"children_added", sum.Children.Added, "children_updated", sum.Children.Updated, "children_deleted", sum.Children.Deleted,
-		"parents_added", sum.Parents.Added, "parents_updated", sum.Parents.Updated, "parents_deleted", sum.Parents.Deleted)
+		"parents_added", sum.Parents.Added, "parents_updated", sum.Parents.Updated, "parents_deleted", sum.Parents.Deleted,
+		"tolerances_removed", sum.TolerancesRemoved)
 
 	http.Redirect(w, r, "/import?done="+strconv.FormatInt(sum.ImportID, 10), http.StatusSeeOther)
 }

@@ -14,6 +14,9 @@ type childRow struct {
 	store.Child
 	Checked bool   // selected last time (only rows that can be emailed)
 	Search  string // normalized text the browser filters on
+
+	Tolerance     bool // the family is flagged "Tolérance": red row (family data)
+	FirstOfFamily bool // first row of its family: shows the tolerance checkbox
 }
 
 type childrenData struct {
@@ -24,6 +27,8 @@ type childrenData struct {
 	Rows     []childRow
 	Families bool // rows are family entries (CSV export), not children
 	NoEmail  int  // rows that cannot be selected: no valid email
+
+	ToleranceSaved bool // notice after a save without JavaScript (?tolerance=1)
 }
 
 // handleChildren shows the entries of one list to select: ?list=<id>, or
@@ -90,6 +95,12 @@ func (s *Server) renderChildren(w http.ResponseWriter, r *http.Request, status i
 		s.serverError(w, r, err)
 		return
 	}
+	flagged, err := s.store.Tolerances(ctx, list.ID)
+	if err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+	data.ToleranceSaved = r.URL.Query().Get("tolerance") == "1"
 	data.Rows = make([]childRow, len(children))
 	for i, c := range children {
 		data.Rows[i] = childRow{
@@ -99,6 +110,9 @@ func (s *Server) renderChildren(w http.ResponseWriter, r *http.Request, status i
 		}
 		if c.FamilyNumber != "" {
 			data.Families = true
+			data.Rows[i].Tolerance = flagged[c.FamilyNumber]
+			// Rows of a family are adjacent (SPEC §4.2).
+			data.Rows[i].FirstOfFamily = i == 0 || children[i-1].FamilyNumber != c.FamilyNumber
 		}
 		if !c.CanEmail() {
 			data.NoEmail++

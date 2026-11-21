@@ -81,6 +81,7 @@ func New(ctx context.Context, version string, st *store.Store, q queue) (*Server
 	mux.HandleFunc("POST /import/preview", s.handleImportPreview)
 	mux.HandleFunc("POST /import/confirm", s.handleImportConfirm)
 	mux.HandleFunc("GET /children", s.handleChildren)
+	mux.HandleFunc("POST /lists/{id}/tolerances", s.handleTolerances)
 	mux.HandleFunc("POST /compose", s.handleCompose)
 	mux.HandleFunc("POST /send", s.handleSend)
 	mux.HandleFunc("GET /history", s.handleHistory)

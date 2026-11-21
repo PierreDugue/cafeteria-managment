@@ -1,6 +1,6 @@
 # 007 — "Tolérance" flag per family
 
-Status: **approved (2026-11-17)** · SPEC §4.2 "Tolérance" (and §4.0, §4.1,
+Status: **done (2026-11-21) · reviewed: approved (2 minor fixes applied)** · SPEC §4.2 "Tolérance" (and §4.0, §4.1,
 §7, §8)
 
 Depends on plan 006 (migration 007 `settings`): this plan adds migration
@@ -297,3 +297,32 @@ and without a search filter, page without JS (save button).
 - Remembering the sort order.
 - A flag for Excel parent/child lists.
 - Importing the flag from the file.
+
+## Implementation notes
+
+Files: `store/migrations/008_tolerances.sql`, `store/tolerances.go`
+(`Tolerances`, `SetTolerances`, `ErrUnknownFamily`), `store/families.go`
+(`TolerancesRemoved`, `DeletedChild.Tolerance`, helper `goneTolerances`,
+removal inside the import tx after the deletions, dry run included),
+`server/tolerances.go` (`handleTolerances`), `server/children.go`,
+`server/server.go` (route), `server/import.go` (log count),
+`web/templates/children.html`, `import_preview.html`, `web/static/children.js`,
+`style.css`, `web/locales/{fr,en}.json` (9 keys each).
+
+Deviations / points for the tester:
+- Bad or missing `version` answers **422** (`children.error.tolerance_invalid`),
+  as the test plan says; compose answers 409 for the same input, so
+  "as compose" is only about parsing.
+- Unknown list is checked first (404, page or plain 404 with `HX-Request`),
+  before reading the body; a list deleted between that check and the save
+  gives 409 (`ErrStaleSelection`).
+- JS `checkbox(row)` uses `input[type="checkbox"]:not(.tolerance)` (the
+  disabled no-email row checkbox has no `name="child"`).
+- The preview's removed-flags line is inside the "deleted entries" card
+  (it only exists when something is deleted; flags are only removed with
+  their family's entries). The mark is a `badge-tolerance` span.
+- The `?tolerance=1` notice is read in `renderChildren` from the request URL.
+- Log lines: `tolerances saved list_id flags` and `tolerances_removed` in
+  "import saved"; no family numbers.
+- JS only checked with `node --check`; behaviour by hand not done in a
+  browser (no browser available to the implementer).

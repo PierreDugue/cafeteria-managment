@@ -32,6 +32,15 @@
 </div>
 <p class="counter" id="counter" role="status" aria-live="polite" data-template="{{if .Families}}{{$L.T "children.counter_families"}}{{else}}{{$L.T "children.counter"}}{{end}}" hidden></p>
 
+{{if .Families}}
+{{if .ToleranceSaved}}<div class="alert alert-success" role="status">{{$L.T "children.tolerance_saved"}}</div>{{end}}
+<p id="tolerance-error" class="alert alert-error" role="alert" data-message="{{$L.T "children.tolerance_error"}}" hidden></p>
+<form id="tolerance-form" method="post" action="/lists/{{.List.ID}}/tolerances">
+  <input type="hidden" name="version" value="{{.Version}}">
+  <button type="submit" class="button-secondary" id="tolerance-save">{{$L.T "children.tolerance_save"}}</button>
+</form>
+{{end}}
+
 <form method="post" action="/compose" class="selection">
   <input type="hidden" name="list" value="{{.List.ID}}">
   <input type="hidden" name="version" value="{{.Version}}">
@@ -47,6 +56,7 @@
         <th>{{$L.T "children.col.family_number"}}</th>
         <th>{{$L.T "children.col.billing_name"}}</th>
         <th>{{$L.T "children.col.payer_email"}}</th>
+        <th id="tolerance-th" aria-sort="none"><span id="tolerance-title">{{$L.T "children.col.tolerance"}}</span><button type="button" class="sort-button" id="sort-tolerance" title="{{$L.T "children.sort_tolerance"}}" aria-label="{{$L.T "children.sort_tolerance"}}" hidden>{{$L.T "children.col.tolerance"}}</button></th>
         {{else}}
         <th>{{$L.T "children.col.child"}}</th>
         <th>{{$L.T "children.col.parent"}}</th>
@@ -57,21 +67,22 @@
     <tbody>
     {{range .Rows}}
       {{if .CanEmail}}
-      <tr data-search="{{.Search}}" data-email="{{.Email}}">
+      <tr data-search="{{.Search}}" data-email="{{.Email}}"{{if $.Data.Families}} data-family="{{.FamilyNumber}}"{{end}}{{if .Tolerance}} class="row-tolerance"{{end}}>
         <td><input type="checkbox" name="child" value="{{.ID}}"{{if .Checked}} checked{{end}} aria-label="{{.Name}}"></td>
-        {{if $.Data.Families}}<td>{{.FamilyNumber}}</td><td>{{.Name}}</td><td>{{.Email}}</td>
+        {{if $.Data.Families}}<td>{{.FamilyNumber}}</td><td>{{.Name}}</td><td>{{.Email}}</td><td>{{if .FirstOfFamily}}<input type="checkbox" class="tolerance" form="tolerance-form" name="family" value="{{.FamilyNumber}}"{{if .Tolerance}} checked{{end}} aria-label="{{$L.T "children.tolerance_label" .FamilyNumber}}">{{end}}</td>
         {{else}}<td>{{.Name}}</td><td>{{.ParentName}}</td><td>{{.Email}}</td>{{end}}
       </tr>
       {{else}}
-      <tr class="row-disabled" data-search="{{.Search}}" data-email="">
+      <tr class="row-disabled{{if .Tolerance}} row-tolerance{{end}}" data-search="{{.Search}}" data-email="" data-family="{{.FamilyNumber}}">
         <td><input type="checkbox" disabled aria-label="{{.Name}}"></td>
         <td>{{.FamilyNumber}}</td>
         <td>{{.Name}}</td>
         <td><span class="warning-text">{{if .InvalidEmail}}{{$L.T "children.payer_email_invalid" .InvalidEmail}}{{else}}{{$L.T "children.payer_email_missing"}}{{end}}</span></td>
+        <td>{{if .FirstOfFamily}}<input type="checkbox" class="tolerance" form="tolerance-form" name="family" value="{{.FamilyNumber}}"{{if .Tolerance}} checked{{end}} aria-label="{{$L.T "children.tolerance_label" .FamilyNumber}}">{{end}}</td>
       </tr>
       {{end}}
     {{end}}
-      <tr id="no-result" hidden><td colspan="4" class="muted">{{$L.T "children.no_result"}}</td></tr>
+      <tr id="no-result" hidden><td colspan="{{if .Families}}5{{else}}4{{end}}" class="muted">{{$L.T "children.no_result"}}</td></tr>
     </tbody>
   </table>
   </div>

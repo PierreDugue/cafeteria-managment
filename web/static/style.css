@@ -138,3 +138,15 @@ progress { width: 100%; max-width: 480px; height: 16px; }
 .badge-failed { background: var(--danger-bg); color: var(--danger); }
 .badge-pending, .badge-sending { background: var(--surface); color: var(--muted); }
 .badge-test { background: var(--warning-bg); border-color: var(--warning-border); color: var(--warning-text); }
+
+/* "Tolérance" flag (SPEC §4.2): red rows, danger-coloured checkbox, header
+   button that sorts. */
+.row-tolerance td { background: var(--danger-bg); }
+input.tolerance { accent-color: var(--danger); }
+.badge-tolerance { background: var(--danger-bg); color: var(--danger); border-color: var(--danger); }
+.sort-button {
+  background: transparent; color: inherit; border: 0; padding: 0; border-radius: 0;
+  font: inherit; font-weight: inherit; cursor: pointer;
+}
+.sort-button:hover, .sort-button:focus-visible { text-decoration: underline; }
+[aria-sort="descending"] .sort-button::after { content: " \25BC"; }

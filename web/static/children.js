@@ -41,7 +41,8 @@
   }
 
   function checkbox(row) {
-    return row.querySelector('input[type="checkbox"]');
+    // Not the tolerance checkbox of the family's first row.
+    return row.querySelector('input[type="checkbox"]:not(.tolerance)');
   }
 
   function updateCounter() {
@@ -95,6 +96,114 @@
     setVisible(false);
   });
   table.addEventListener("change", updateCounter);
+
+  // "Tolérance" flags (SPEC §4.2): one checkbox per family, saved at once.
+  // Without this script the form's own save button does the same.
+  var tolForm = document.getElementById("tolerance-form");
+  if (tolForm) {
+    var tolBoxes = Array.prototype.slice.call(table.querySelectorAll("input.tolerance"));
+    var tolError = document.getElementById("tolerance-error");
+    var tolSave = document.getElementById("tolerance-save");
+    var tolTh = document.getElementById("tolerance-th");
+    var tolTitle = document.getElementById("tolerance-title");
+    var sortButton = document.getElementById("sort-tolerance");
+    var tbody = noResult.parentNode;
+
+    var tolState = function () {
+      return tolBoxes.filter(function (b) { return b.checked; }).map(function (b) { return b.value; });
+    };
+    var saved = tolState(); // last state the server confirmed
+    var inFlight = false;
+    var dirty = false;
+
+    var paint = function (box) {
+      rows.forEach(function (row) {
+        if (row.getAttribute("data-family") === box.value) {
+          row.classList.toggle("row-tolerance", box.checked);
+        }
+      });
+    };
+    var revert = function () {
+      tolBoxes.forEach(function (box) {
+        box.checked = saved.indexOf(box.value) !== -1;
+        paint(box);
+      });
+    };
+    var fail = function () {
+      dirty = false;
+      inFlight = false;
+      revert();
+      tolError.textContent = tolError.getAttribute("data-message") || "";
+      tolError.hidden = false;
+    };
+    // One request at a time; a change made meanwhile is sent right after
+    // with the latest full state, so the last write wins.
+    var send = function () {
+      inFlight = true;
+      dirty = false;
+      var sent = tolState();
+      fetch(tolForm.action, {
+        method: "POST",
+        headers: { "HX-Request": "true" },
+        body: new URLSearchParams(new FormData(tolForm))
+      }).then(function (res) {
+        if (!res.ok) {
+          fail();
+          return;
+        }
+        saved = sent;
+        tolError.hidden = true;
+        inFlight = false;
+        if (dirty) {
+          send();
+        }
+      }, fail);
+    };
+
+    tolBoxes.forEach(function (box) {
+      box.addEventListener("change", function () {
+        paint(box);
+        if (inFlight) {
+          dirty = true;
+        } else {
+          send();
+        }
+      });
+    });
+    tolSave.hidden = true;
+
+    // Sort by tolerance: flagged families first, each group in the usual
+    // order; whole families move. Not saved, and later changes of a flag
+    // do not re-sort.
+    var order = rows.slice();
+    var groups = [];
+    // No prototype: family numbers come from the file and could be
+    // "constructor" or "__proto__".
+    var byFamily = Object.create(null);
+    order.forEach(function (row) {
+      var f = row.getAttribute("data-family");
+      if (!byFamily[f]) {
+        byFamily[f] = [];
+        groups.push(byFamily[f]);
+      }
+      byFamily[f].push(row);
+    });
+    var flaggedFirst = false;
+    sortButton.addEventListener("click", function () {
+      flaggedFirst = !flaggedFirst;
+      var sequence = order;
+      if (flaggedFirst) {
+        var isOn = function (g) { return g[0].classList.contains("row-tolerance"); };
+        sequence = [].concat.apply([], groups.filter(isOn).concat(groups.filter(function (g) { return !isOn(g); })));
+      }
+      sequence.forEach(function (row) {
+        tbody.insertBefore(row, noResult);
+      });
+      tolTh.setAttribute("aria-sort", flaggedFirst ? "descending" : "none");
+    });
+    tolTitle.hidden = true;
+    sortButton.hidden = false;
+  }
 
   toolbar.hidden = false;
   counter.hidden = false;

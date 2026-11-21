@@ -283,5 +283,14 @@
   "settings.sending.title": "Sending emails",
   "settings.sending.later": "The email account used for sending will be chosen here once real sending is available.",
   "settings.saved": "Settings saved.",
-  "settings.error.invalid": "Invalid form: nothing was saved."
+  "settings.error.invalid": "Invalid form: nothing was saved.",
+  "children.col.tolerance": "Tolerance",
+  "children.sort_tolerance": "Tolerance (sort)",
+  "children.tolerance_label": "Tolerance for family %s",
+  "children.tolerance_save": "Save tolerances",
+  "children.tolerance_saved": "Tolerances saved.",
+  "children.tolerance_error": "The tolerance could not be saved. Reload the page.",
+  "children.error.tolerance_invalid": "A ticked family is not in this list. Nothing was saved.",
+  "preview.tolerance_removed": "%d family(ies) with tolerance are no longer in the file: their tolerance will be removed.",
+  "preview.tolerance_mark": "Tolerance"
 }
