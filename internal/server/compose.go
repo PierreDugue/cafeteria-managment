@@ -227,6 +227,11 @@ func (s *Server) handleCompose(w http.ResponseWriter, r *http.Request) {
 		}
 		data.Preview = &emails[0]
 	case "send":
+		if msg := s.sendBlocked(loc); msg != "" {
+			data.Errors = append(data.Errors, msg)
+			status = http.StatusUnprocessableEntity
+			break
+		}
 		emails, problems, err := message.RenderAll(subject, body, group, mode, loc.T("message.join_and"))
 		if err != nil {
 			s.serverError(w, r, err)
@@ -237,7 +242,7 @@ func (s *Server) handleCompose(w http.ResponseWriter, r *http.Request) {
 			status = http.StatusUnprocessableEntity
 			break
 		}
-		s.renderSendConfirm(w, r, sel, subject, body, emails)
+		s.renderSendConfirm(w, r, http.StatusOK, sel, subject, body, emails, "")
 		return
 	case "save_template":
 		data.TemplateName = r.PostForm.Get("template_name")

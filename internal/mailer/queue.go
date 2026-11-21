@@ -35,36 +35,35 @@ type Store interface {
 
 // Options configure a Queue.
 type Options struct {
-	Provider    string        // recorded on new batches
-	Interval    time.Duration // between two sends
+	// Providers are the senders of this run, by the name recorded on
+	// batches. A batch is always sent with its own provider.
+	Providers   map[string]Provider
 	SendTimeout time.Duration // per email; 60 s if 0
 }
 
 // Queue sends the pending messages of the database, one at a time. The
 // database is the queue: nothing is kept in memory but a wake-up signal.
 type Queue struct {
-	st     Store
-	sender Sender
-	opts   Options
-	wake   chan struct{}
+	st   Store
+	opts Options
+	wake chan struct{}
 	// after returns a channel that fires after d; tests replace it.
 	after func(d time.Duration) <-chan time.Time
 }
 
 // NewQueue builds a queue. Run it with Run, in a goroutine owned by the
 // caller.
-func NewQueue(st Store, s Sender, o Options) *Queue {
+func NewQueue(st Store, o Options) *Queue {
 	if o.SendTimeout <= 0 {
 		o.SendTimeout = defaultSendTimeout
 	}
-	return &Queue{st: st, sender: s, opts: o, wake: make(chan struct{}, 1), after: time.After}
+	return &Queue{st: st, opts: o, wake: make(chan struct{}, 1), after: time.After}
 }
 
-// Provider returns the provider name to record on new batches.
-func (q *Queue) Provider() string { return q.opts.Provider }
-
-// Interval returns the wait between two sends.
-func (q *Queue) Interval() time.Duration { return q.opts.Interval }
+// Interval returns the wait between two sends of provider, 0 if unknown.
+func (q *Queue) Interval(provider string) time.Duration {
+	return q.opts.Providers[provider].Interval
+}
 
 // Wake tells the queue that there may be something to send. It never blocks.
 func (q *Queue) Wake() {
@@ -130,15 +129,24 @@ func (q *Queue) step(ctx context.Context) (worked bool, wait time.Duration, err 
 	// Once claimed, the email and its result outlive ctx (graceful stop).
 	sendCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), q.opts.SendTimeout)
 	defer cancel()
-	sendErr := q.sender.Send(sendCtx, Message{
-		To:      mail.Address{Name: msg.ToName, Address: msg.ToEmail},
-		Subject: msg.Subject,
-		Body:    msg.Body,
-	})
+	p, known := q.opts.Providers[msg.Provider]
+	var sendErr error
+	if known {
+		sendErr = p.Sender.Send(sendCtx, Message{
+			To:      mail.Address{Name: msg.ToName, Address: msg.ToEmail},
+			Subject: msg.Subject,
+			Body:    msg.Body,
+		})
+	} else {
+		// E.g. a graph batch resumed by a build without Microsoft 365: it
+		// must neither fail nor go through another provider.
+		slog.Warn("no sender for provider", "provider", msg.Provider, "batch", msg.BatchID)
+		sendErr = ErrAccount
+	}
 
 	recCtx, recCancel := context.WithTimeout(context.WithoutCancel(ctx), q.opts.SendTimeout)
 	defer recCancel()
-	wait, err = q.record(recCtx, msg, sendErr)
+	wait, err = q.record(recCtx, msg, p.Interval, sendErr)
 	if err != nil && wait < errorWait {
 		wait = errorWait
 	}
@@ -147,14 +155,15 @@ func (q *Queue) step(ctx context.Context) (worked bool, wait time.Duration, err 
 
 // record saves the result of sending msg and returns the wait before the
 // next email. Logs carry IDs and codes only: never the provider's text.
-func (q *Queue) record(ctx context.Context, msg store.QueuedMessage, sendErr error) (time.Duration, error) {
-	wait := q.opts.Interval
-	var rl *RateLimitError
-	switch {
-	case sendErr == nil:
+func (q *Queue) record(ctx context.Context, msg store.QueuedMessage, interval time.Duration, sendErr error) (time.Duration, error) {
+	wait := interval
+	if sendErr == nil {
 		return wait, q.st.MarkSent(ctx, msg.ID)
-
-	case errors.As(sendErr, &rl):
+	}
+	switch ErrorCode(sendErr) {
+	case store.ErrCodeRateLimited:
+		var rl *RateLimitError
+		errors.As(sendErr, &rl)
 		if msg.Attempts >= maxAttempts {
 			slog.Warn("email failed", "batch", msg.BatchID, "message", msg.ID, "code", store.ErrCodeRateLimited)
 			return wait, q.st.MarkFailed(ctx, msg.ID, store.ErrCodeRateLimited, sendErr.Error())
@@ -163,12 +172,16 @@ func (q *Queue) record(ctx context.Context, msg store.QueuedMessage, sendErr err
 		slog.Warn("rate limited", "batch", msg.BatchID, "message", msg.ID, "attempt", msg.Attempts)
 		return wait, q.st.ReleaseMessage(ctx, msg.ID)
 
-	case errors.Is(sendErr, ErrAccount):
+	case store.ErrCodeAccount:
 		slog.Warn("account cannot send, batch stopped", "batch", msg.BatchID, "message", msg.ID)
 		if err := q.st.ReleaseMessage(ctx, msg.ID); err != nil {
 			return wait, err
 		}
 		return wait, q.st.StopBatch(ctx, msg.BatchID, store.StopAccount)
+
+	case store.ErrCodeUnknown:
+		slog.Warn("email state unknown", "batch", msg.BatchID, "message", msg.ID, "code", store.ErrCodeUnknown)
+		return wait, q.st.MarkFailed(ctx, msg.ID, store.ErrCodeUnknown, sendErr.Error())
 
 	default:
 		slog.Warn("email failed", "batch", msg.BatchID, "message", msg.ID, "code", store.ErrCodeSend)

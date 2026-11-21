@@ -401,7 +401,7 @@ func TestComposeSendHistoryIgnoreTolerance(t *testing.T) {
 	noFlag("confirmation", rec.Body.String())
 	tok := tokenOf(t, rec.Body.String())
 
-	rec = post(s, "/send", vals("token", tok))
+	rec = post(s, "/send", vals("token", tok, "provider", "test"))
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("send = %d: %s", rec.Code, rec.Body.String())
 	}

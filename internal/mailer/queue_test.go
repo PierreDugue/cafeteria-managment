@@ -72,7 +72,7 @@ func newEnv(t *testing.T, interval time.Duration) *env {
 		t.Fatal(err)
 	}
 	e := &env{st: st, sender: &fakeSender{}, listID: sum.ListID, ver: v}
-	e.q = NewQueue(st, e.sender, Options{Provider: ProviderTest, Interval: interval})
+	e.q = NewQueue(st, Options{Providers: map[string]Provider{ProviderTest: {Sender: e.sender, Interval: interval}}})
 	e.q.after = func(d time.Duration) <-chan time.Time {
 		e.waits = append(e.waits, d)
 		c := make(chan time.Time, 1)
@@ -321,7 +321,7 @@ func (f *failingStore) StopBatch(context.Context, int64, string) error          
 func (f *failingStore) RecoverInterrupted(context.Context) error                { return errDB }
 
 func TestStepStoreErrorWaitsFiveSeconds(t *testing.T) {
-	q := NewQueue(&failingStore{}, &fakeSender{}, Options{})
+	q := NewQueue(&failingStore{}, Options{})
 	worked, wait, err := q.step(context.Background())
 	if worked || wait != 5*time.Second || !errors.Is(err, errDB) {
 		t.Fatalf("step = %v, %v, %v", worked, wait, err)
@@ -335,11 +335,11 @@ func TestStepStoreErrorWaitsFiveSeconds(t *testing.T) {
 type recordFailStore struct{ failingStore }
 
 func (r *recordFailStore) ClaimNextMessage(context.Context) (store.QueuedMessage, bool, error) {
-	return store.QueuedMessage{ID: 1, BatchID: 1, ToEmail: "a@example.fr", Attempts: 1}, true, nil
+	return store.QueuedMessage{ID: 1, BatchID: 1, ToEmail: "a@example.fr", Provider: ProviderTest, Attempts: 1}, true, nil
 }
 
 func TestStepRecordErrorWaitsAtLeastFiveSeconds(t *testing.T) {
-	q := NewQueue(&recordFailStore{}, &fakeSender{}, Options{Interval: time.Second})
+	q := NewQueue(&recordFailStore{}, Options{Providers: map[string]Provider{ProviderTest: {Sender: &fakeSender{}, Interval: time.Second}}})
 	worked, wait, err := q.step(context.Background())
 	if !worked || wait < 5*time.Second || !errors.Is(err, errDB) {
 		t.Fatalf("step = %v, %v, %v", worked, wait, err)
@@ -348,7 +348,7 @@ func TestStepRecordErrorWaitsAtLeastFiveSeconds(t *testing.T) {
 
 func TestRunStoreErrorDoesNotSpin(t *testing.T) {
 	fs := &failingStore{}
-	q := NewQueue(fs, &fakeSender{}, Options{})
+	q := NewQueue(fs, Options{})
 	ctx, cancel := context.WithCancel(context.Background())
 	var waits []time.Duration
 	q.after = func(d time.Duration) <-chan time.Time {
@@ -462,7 +462,7 @@ func TestRunRateLimitWaitUsesTimerOnly(t *testing.T) {
 }
 
 func TestWakeNeverBlocks(t *testing.T) {
-	q := NewQueue(&failingStore{}, &fakeSender{}, Options{})
+	q := NewQueue(&failingStore{}, Options{})
 	finished := make(chan struct{})
 	go func() {
 		for range 1000 {
@@ -489,8 +489,8 @@ func TestRecoverDelegatesAndAccessors(t *testing.T) {
 	if b, _ := e.st.Batch(ctx, id); b.Status != store.BatchDone || b.Failed != 1 {
 		t.Errorf("batch = %+v", b)
 	}
-	if e.q.Provider() != ProviderTest || e.q.Interval() != 500*time.Millisecond {
-		t.Errorf("Provider/Interval = %q %v", e.q.Provider(), e.q.Interval())
+	if e.q.Interval(ProviderTest) != 500*time.Millisecond {
+		t.Errorf("Interval = %v", e.q.Interval(ProviderTest))
 	}
 }
 
@@ -502,5 +502,132 @@ func TestTestSenderAndErrors(t *testing.T) {
 	rl := &RateLimitError{RetryAfter: time.Second, Err: inner}
 	if !errors.Is(rl, inner) || rl.Error() == "" || (&RateLimitError{}).Error() == "" {
 		t.Error("RateLimitError")
+	}
+}
+
+// batchWith creates a batch of one message for provider.
+func (e *env) batchWith(t *testing.T, token, provider string) int64 {
+	t.Helper()
+	id, _, err := e.st.CreateBatch(context.Background(), store.NewBatch{
+		Token: token, ListID: e.listID, Version: e.ver, Provider: provider,
+		Subject: "S", Body: "B", Messages: []store.NewMessage{msg("A", "a@example.fr")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func TestStepRoutesByBatchProvider(t *testing.T) {
+	e := newEnv(t, time.Second)
+	graph := &fakeSender{}
+	e.q.opts.Providers[ProviderGraph] = Provider{Sender: graph, Interval: 2 * time.Second}
+	ctx := context.Background()
+
+	testID := e.batchWith(t, "T1", ProviderTest)
+	if _, wait, err := e.q.step(ctx); err != nil || wait != time.Second {
+		t.Fatalf("test step wait = %v, err = %v", wait, err)
+	}
+	if e.sender.count() != 1 || graph.count() != 0 {
+		t.Fatalf("test batch: test=%d graph=%d", e.sender.count(), graph.count())
+	}
+	if e.status(t, testID)[0].Status != store.MsgSent {
+		t.Error("test message not sent")
+	}
+
+	graphID := e.batchWith(t, "T2", ProviderGraph)
+	if _, wait, err := e.q.step(ctx); err != nil || wait != 2*time.Second {
+		t.Fatalf("graph step wait = %v, err = %v", wait, err)
+	}
+	if e.sender.count() != 1 || graph.count() != 1 {
+		t.Fatalf("graph batch: test=%d graph=%d", e.sender.count(), graph.count())
+	}
+	if e.status(t, graphID)[0].Status != store.MsgSent {
+		t.Error("graph message not sent")
+	}
+}
+
+func TestStepUnknownProviderStopsBatchWithoutFailing(t *testing.T) {
+	e := newEnv(t, 0) // only "test" registered
+	id := e.batchWith(t, "T", ProviderGraph)
+	ctx := context.Background()
+	worked, _, err := e.q.step(ctx)
+	if err != nil || !worked {
+		t.Fatalf("step = %v, %v", worked, err)
+	}
+	if e.sender.count() != 0 {
+		t.Error("another provider must never be used")
+	}
+	b, _ := e.st.Batch(ctx, id)
+	if b.Status != store.BatchStopped || b.StopReason != store.StopAccount || b.Failed != 0 || b.Pending != 1 {
+		t.Errorf("batch = %+v", b)
+	}
+	if m := e.status(t, id)[0]; m.Status != store.MsgPending {
+		t.Errorf("message = %+v", m)
+	}
+}
+
+func TestStepUncertainIsFailedUnknownAndQueueGoesOn(t *testing.T) {
+	e := newEnv(t, 0)
+	e.sender.fn = func(n int, _ Message) error {
+		if n == 1 {
+			return fmt.Errorf("no answer: %w", ErrUncertain)
+		}
+		return nil
+	}
+	id := e.batch(t, "T", msg("A", "a@example.fr"), msg("B", "b@example.fr"))
+	ctx := context.Background()
+	for range 2 {
+		if _, _, err := e.q.step(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ms := e.status(t, id)
+	if ms[0].Status != store.MsgFailed || ms[0].ErrorCode != store.ErrCodeUnknown {
+		t.Errorf("first = %+v", ms[0])
+	}
+	if ms[1].Status != store.MsgSent {
+		t.Errorf("second = %+v", ms[1])
+	}
+	if b, _ := e.st.Batch(ctx, id); b.Status == store.BatchStopped {
+		t.Errorf("batch stopped: %+v", b)
+	}
+}
+
+func TestInterval(t *testing.T) {
+	e := newEnv(t, 3*time.Second)
+	e.q.opts.Providers[ProviderGraph] = Provider{Sender: &fakeSender{}, Interval: 2 * time.Second}
+	for provider, want := range map[string]time.Duration{
+		ProviderTest: 3 * time.Second, ProviderGraph: 2 * time.Second, "nope": 0, "": 0,
+	} {
+		if got := e.q.Interval(provider); got != want {
+			t.Errorf("Interval(%q) = %v, want %v", provider, got, want)
+		}
+	}
+}
+
+func TestErrorCode(t *testing.T) {
+	plain := errors.New("550 refused")
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"rate limit", &RateLimitError{RetryAfter: time.Second}, store.ErrCodeRateLimited},
+		{"wrapped rate limit", fmt.Errorf("send: %w", &RateLimitError{Err: plain}), store.ErrCodeRateLimited},
+		{"account", ErrAccount, store.ErrCodeAccount},
+		{"wrapped account", fmt.Errorf("x: %w: y", ErrAccount), store.ErrCodeAccount},
+		{"uncertain", ErrUncertain, store.ErrCodeUnknown},
+		{"wrapped uncertain", fmt.Errorf("no answer: %w", ErrUncertain), store.ErrCodeUnknown},
+		{"plain", plain, store.ErrCodeSend},
+		{"wrapped plain", fmt.Errorf("w: %w", plain), store.ErrCodeSend},
+		{"rate limit wrapping account", &RateLimitError{Err: ErrAccount}, store.ErrCodeRateLimited},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ErrorCode(tt.err); got != tt.want {
+				t.Errorf("ErrorCode = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

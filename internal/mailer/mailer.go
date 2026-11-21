@@ -9,10 +9,22 @@ import (
 	"fmt"
 	"net/mail"
 	"time"
+
+	"cafeteria-management/internal/store"
 )
 
-// ProviderTest is the name of the test-mode provider, recorded on batches.
-const ProviderTest = "test"
+// Provider names, recorded on batches (batches.provider).
+const (
+	ProviderTest  = "test"  // test mode: nothing is sent
+	ProviderGraph = "graph" // Microsoft 365 through Microsoft Graph
+)
+
+// Provider is a sender with the wait to keep after each of its emails
+// (rate limits, SPEC §5.1).
+type Provider struct {
+	Sender   Sender
+	Interval time.Duration
+}
 
 // Message is one email for a Sender. To is structured: a provider must use
 // its name and address fields (Graph emailAddress, go-mail AddrFullName),
@@ -53,9 +65,31 @@ func (e *RateLimitError) Unwrap() error { return e.Err }
 // revoked). The email was not sent. Providers wrap it with %w.
 var ErrAccount = errors.New("email account cannot send")
 
+// ErrUncertain means the provider may have processed the email (the
+// connection was lost or timed out after the request was sent). The email
+// must not be retried automatically: that is how a parent gets it twice.
+// Providers wrap it with %w.
+var ErrUncertain = errors.New("email may have been sent")
+
 // TestSender accepts every email and sends nothing: it keeps no file and
 // does not log the content. The history is the only trace (test mode).
 type TestSender struct{}
 
 // Send implements Sender.
 func (TestSender) Send(context.Context, Message) error { return nil }
+
+// ErrorCode classifies a Sender error with the code recorded on a failed
+// message (store.ErrCode*): rate_limited, account, unknown, or send.
+func ErrorCode(err error) string {
+	var rl *RateLimitError
+	switch {
+	case errors.As(err, &rl):
+		return store.ErrCodeRateLimited
+	case errors.Is(err, ErrAccount):
+		return store.ErrCodeAccount
+	case errors.Is(err, ErrUncertain):
+		return store.ErrCodeUnknown
+	default:
+		return store.ErrCodeSend
+	}
+}

@@ -248,7 +248,7 @@ func TestTestModeStatusWording(t *testing.T) {
 		t.Error("a test email shows as Envoyé")
 	}
 	// A real provider batch says Envoyé.
-	q := &fakeQueue{provider: "graph"}
+	q := &fakeQueue{}
 	s, st := newServerQ(t, q)
 	list := seedList(t, st, "L", threeChildren)
 	bid, _, err := st.CreateBatch(context.Background(), store.NewBatch{Token: "T", ListID: list, Version: versionOf(t, st, list), Provider: "graph", Subject: "S", Body: "B",
@@ -312,7 +312,7 @@ func TestUnknownFailureShowsWarning(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := text(get(e.s, fmt.Sprintf("/history/%d", id), "fr"))
-	for _, want := range []string{"État inconnu (l'application a été fermée pendant l'envoi) : vérifiez vos éléments envoyés avant de renvoyer", "Interrompu", "Reprendre l'envoi (1 en attente)", "Renvoyer les 1 email(s) en échec"} {
+	for _, want := range []string{"État inconnu : l'email est peut-être parti (application fermée ou pas de réponse du fournisseur). Vérifiez vos éléments envoyés avant de renvoyer.", "Interrompu", "Reprendre l'envoi (1 en attente)", "Renvoyer les 1 email(s) en échec"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("page does not contain %q", want)
 		}
@@ -540,7 +540,7 @@ func TestHistorySurvivesListDeletionAndReimport(t *testing.T) {
 }
 
 func TestFamilyBatchColumns(t *testing.T) {
-	q := &fakeQueue{provider: mailer.ProviderTest}
+	q := &fakeQueue{}
 	s, st := newServerQ(t, q)
 	list := seedList(t, st, "Familles", silvaRows)
 	bid, _, err := st.CreateBatch(context.Background(), store.NewBatch{Token: "F", ListID: list, Version: versionOf(t, st, list), Families: true, Provider: mailer.ProviderTest, Subject: "S", Body: "B",
@@ -581,7 +581,7 @@ func TestNoPersonalDataInLogs(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	sender := &secretSender{cancel: cancel}
-	wq := mailer.NewQueue(e.st, sender, mailer.Options{Provider: mailer.ProviderTest})
+	wq := mailer.NewQueue(e.st, mailer.Options{Providers: map[string]mailer.Provider{mailer.ProviderTest: {Sender: sender}}})
 	done := make(chan struct{})
 	go func() { wq.Run(ctx); close(done) }()
 	<-done

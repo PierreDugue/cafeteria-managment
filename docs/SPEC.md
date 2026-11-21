@@ -467,8 +467,8 @@ Now (plan 006):
   will be chosen here once real sending exists.
 
 With the real sending (milestone 6, Microsoft 365, §5.1; designed in plan
-`docs/plans/008-graph-sending.md`, approved 2026-11-17, **on hold until IT
-approves the app registration**, §5.4 option 4):
+`docs/plans/008-graph-sending.md`, approved 2026-11-17, implementation started 2026-11-21 ahead of IT's
+approval of the app registration, §5.4 option 4):
 
 - A build without the app registration IDs (§5.1) shows test mode and
   "L'envoi par Microsoft 365 n'est pas disponible dans cette version".
@@ -505,8 +505,8 @@ SMTP login. Graph works with modern sign-in only, and sent emails are saved in
 the user's Outlook **Sent Items** folder.
 
 Status: designed in plan `docs/plans/008-graph-sending.md` (approved
-2026-11-17), **on hold**: not implemented until IT approves the app
-registration (§5.4 option 4). Decisions confirmed by the user, 2026-11-17.
+2026-11-17); implementation started 2026-11-21, as IT approval of the app
+registration (§5.4 option 4) is expected. Decisions confirmed by the user, 2026-11-17.
 
 - **App registration** (once, free, by IT) in the organization's Microsoft
   Entra ID, **single tenant**:
@@ -546,12 +546,12 @@ registration (§5.4 option 4). Decisions confirmed by the user, 2026-11-17.
   | Graph / network result | Effect |
   |---|---|
   | 202 Accepted | sent |
-  | 429, 503 | wait (`Retry-After`, else 60 s), then retry (§4.4) |
+  | 429 | wait (`Retry-After`, else 60 s), then retry (§4.4) |
   | 401 | refresh the token and retry once, then "account cannot send" |
   | 403, not signed in, refresh refused | "account cannot send": the batch stops, nothing failed |
   | request not sent (no network, DNS, connection refused) | same: the batch stops, resumed by hand |
   | 400 (malformed address…), other 4xx | this email fails, the batch goes on |
-  | 500, 502, 504, no answer after the request was sent | this email fails with "état inconnu", never retried automatically |
+  | 500, 502, 503, 504, no answer after the request was sent | this email fails with "état inconnu", never retried automatically |
 
   Graph accepts a well-formed address that has no mailbox; the
   non-delivery report arrives later in the user's Outlook inbox, which the
@@ -839,6 +839,8 @@ internal/importer/    Excel parsing and validation
 internal/recipients/  one recipient per parent for the selected children
 internal/message/     placeholders, checks and rendering of one email
 internal/mailer/      email providers and sending queue
+internal/keychain/    OS keychain storage, split into chunks
+internal/microsoft/   Microsoft sign-in (OAuth2 + PKCE) and Graph sending
 internal/i18n/        translations
 web/templates/        HTML templates
 web/static/           CSS, JS (htmx)
@@ -893,8 +895,8 @@ The app starts as a browser tab. It may later run in its own window with
    available.
 6. **Microsoft 365** — Microsoft sign-in and Graph sending (only once the
    app is approved and registered, §5.4 option 4). Designed and approved
-   (plan 008, 2026-11-17), **on hold** until IT approves the app
-   registration.
+   (plan 008, 2026-11-17); code ready, tested and reviewed (2026-11-21),
+   waiting for IT to register the app.
 7. **i18n** — FR/EN translation files and language switch.
 8. **Packaging** — Windows/macOS builds, open browser on start, app icon.
 

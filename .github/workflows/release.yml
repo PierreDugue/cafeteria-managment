@@ -29,7 +29,9 @@ jobs:
 
       # Pure Go (no CGO): all platforms are cross-compiled from Linux.
       - name: Build
-        run: make build-all VERSION="${GITHUB_REF_NAME}"
+        # MS_CLIENT_ID / MS_TENANT_ID are repository variables (public
+        # identifiers, not secrets). Unset: a test-mode-only build.
+        run: make build-all VERSION="${GITHUB_REF_NAME}" MS_CLIENT_ID="${{ vars.MS_CLIENT_ID }}" MS_TENANT_ID="${{ vars.MS_TENANT_ID }}"
 
       - name: Checksums
         working-directory: dist

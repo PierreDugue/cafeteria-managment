@@ -13,6 +13,13 @@
     <p><label><input type="radio" name="language" value="en" {{if eq .Language "en"}}checked{{end}}> {{$L.T "settings.language.en"}}</label></p>
     <p class="help">{{$L.T "settings.language.help"}}</p>
   </fieldset>
+  {{if .Configured}}
+  <fieldset class="field">
+    <legend>{{$L.T "settings.sending.mode.legend"}}</legend>
+    <p><label><input type="radio" name="sending" value="test" {{if eq .Provider "test"}}checked{{end}}> {{$L.T "settings.sending.mode.test"}}</label></p>
+    <p><label><input type="radio" name="sending" value="graph" {{if eq .Provider "graph"}}checked{{end}}> {{$L.T "settings.sending.mode.graph"}}</label></p>
+  </fieldset>
+  {{end}}
   <div class="actions">
     <button type="submit">{{$L.T "lists.save"}}</button>
   </div>
@@ -21,6 +28,31 @@
 <section class="card">
   <h2>{{$L.T "settings.sending.title"}}</h2>
   {{if .Test}}<div class="alert test-banner" role="status">{{$L.T "send.test_banner"}}</div>{{end}}
-  <p>{{$L.T "settings.sending.later"}}</p>
+  {{if not .Configured}}
+  <p>{{$L.T "settings.sending.unavailable"}}</p>
+  {{end}}
 </section>
+
+{{if .Configured}}
+<section class="card">
+  <h2>{{$L.T "settings.microsoft.title"}}</h2>
+  {{if .Connected}}
+  <p>{{$L.T "settings.microsoft.connected" .Account.Name .Account.Address}}</p>
+  <form method="post" action="/settings/microsoft/test">
+    <div class="actions"><button type="submit">{{$L.T "settings.microsoft.test"}}</button></div>
+    <p class="help">{{$L.T "settings.microsoft.test_help"}}</p>
+  </form>
+  <form method="post" action="/settings/microsoft/signout">
+    <div class="actions"><button type="submit" class="button-secondary">{{$L.T "settings.microsoft.signout"}}</button></div>
+    <p class="help">{{$L.T "settings.microsoft.signout_help"}}</p>
+  </form>
+  {{else}}
+  <p>{{$L.T "settings.microsoft.not_connected"}}</p>
+  <form method="post" action="/settings/microsoft/signin">
+    <div class="actions"><button type="submit">{{$L.T "settings.microsoft.signin"}}</button></div>
+    <p class="help">{{$L.T "settings.microsoft.signin_help"}}</p>
+  </form>
+  {{end}}
+</section>
+{{end}}
 {{end}}{{end}}

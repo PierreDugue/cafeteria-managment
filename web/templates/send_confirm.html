@@ -3,7 +3,9 @@
 <h1>{{$L.T "send.title"}}</h1>
 <p class="muted">{{$L.T "compose.list" .ListName}}</p>
 
+{{if .Notice}}<div class="alert alert-error" role="alert">{{.Notice}}</div>{{end}}
 {{if .Test}}<div class="alert test-banner" role="status">{{$L.T "send.test_banner"}}</div>{{end}}
+{{if .From}}<p><strong>{{$L.T "send.from" .From}}</strong></p>{{end}}
 
 <h2>{{if .Families}}{{$L.T "send.question_families" .Count}}{{else}}{{$L.T "send.question" .Count}}{{end}}</h2>
 <p>{{$L.T "send.keep_open" .Minutes}}</p>
@@ -53,6 +55,7 @@
   <input type="hidden" name="subject" value="{{.Subject}}">
   <input type="hidden" name="body" value="{{.Body}}">
   <input type="hidden" name="token" value="{{.Token}}">
+  <input type="hidden" name="provider" value="{{.Provider}}">
   <div class="actions">
     <button type="submit">{{$L.T "send.confirm_button" .Count}}</button>
     <button type="submit" formaction="/compose" class="button-secondary">{{$L.T "send.edit_button"}}</button>

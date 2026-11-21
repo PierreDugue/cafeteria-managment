@@ -997,3 +997,19 @@ func TestBatchIDsAreNeverReused(t *testing.T) {
 		t.Errorf("ID %d reused after %d", b, a)
 	}
 }
+
+func TestClaimNextMessageReturnsBatchProvider(t *testing.T) {
+	e := newBatchEnv(t)
+	nb := e.batch("TOK-G", 1)
+	nb.Provider = "graph"
+	if _, created, err := e.s.CreateBatch(context.Background(), nb); err != nil || !created {
+		t.Fatalf("CreateBatch = %v, %v", created, err)
+	}
+	if q := e.claim(t); q.Provider != "graph" {
+		t.Errorf("Provider = %q, want graph", q.Provider)
+	}
+	e.create(t, "TOK-T", 1)
+	if q := e.claim(t); q.Provider != "test" {
+		t.Errorf("Provider = %q, want test", q.Provider)
+	}
+}

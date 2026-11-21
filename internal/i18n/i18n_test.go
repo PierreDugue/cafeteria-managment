@@ -107,7 +107,12 @@ func TestSettingsKeysInBothLocales(t *testing.T) {
 	for _, l := range supported {
 		for _, k := range []string{"nav.settings", "settings.title", "settings.language.legend", "settings.language.auto",
 			"settings.language.fr", "settings.language.en", "settings.language.help", "settings.sending.title",
-			"settings.sending.later", "settings.saved", "settings.error.invalid"} {
+			"settings.sending.unavailable", "settings.sending.mode.legend", "settings.sending.mode.test",
+			"settings.sending.mode.graph", "settings.sending.error.needs_account", "settings.microsoft.title",
+			"settings.microsoft.signin", "settings.microsoft.signout", "settings.microsoft.test",
+			"settings.microsoft.error.denied", "settings.microsoft.error.consent", "settings.microsoft.error.expired",
+			"settings.microsoft.error.failed", "settings.microsoft.error.not_connected", "settings.microsoft.error.test_failed",
+			"send.error.mode_changed", "send.error.not_connected", "send.from", "settings.saved", "settings.error.invalid"} {
 			if b.msgs[l][k] == "" {
 				t.Errorf("%s: key %q missing or empty", l, k)
 			}

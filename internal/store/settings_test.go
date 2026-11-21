@@ -45,8 +45,12 @@ func TestSaveSettingsUpsertKeepsOneRow(t *testing.T) {
 	if err := s.SaveSettings(ctx, Settings{Language: "fr"}); err != nil {
 		t.Fatal(err)
 	}
-	if n := countRows(t, s, `SELECT COUNT(*) FROM settings`); n != 1 {
-		t.Errorf("rows = %d, want 1", n)
+	// One row per key (language, provider), never more.
+	if n := countRows(t, s, `SELECT COUNT(*) FROM settings`); n != 2 {
+		t.Errorf("rows = %d, want 2", n)
+	}
+	if n := countRows(t, s, `SELECT COUNT(*) FROM settings WHERE key = 'language'`); n != 1 {
+		t.Errorf("language rows = %d, want 1", n)
 	}
 	var v, at string
 	if err := s.db.QueryRow(`SELECT value, updated_at FROM settings WHERE key = 'language'`).Scan(&v, &at); err != nil {
@@ -162,5 +166,27 @@ func TestMigration007OnV6Database(t *testing.T) {
 	}
 	if n := countRows(t, s, `SELECT COUNT(*) FROM pragma_foreign_key_check`); n != 0 {
 		t.Errorf("foreign_key_check reports %d problems", n)
+	}
+}
+
+func TestSettingsProviderRoundTripWithLanguage(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t)
+	if got, _ := s.Settings(ctx); got.Provider != "" {
+		t.Fatalf("default provider = %q, want empty", got.Provider)
+	}
+	if err := s.SaveSettings(ctx, Settings{Language: "fr", Provider: "graph"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Settings(ctx)
+	if err != nil || got != (Settings{Language: "fr", Provider: "graph"}) {
+		t.Fatalf("Settings = %+v, %v", got, err)
+	}
+	// Back to test mode: stored as an empty string.
+	if err := s.SaveSettings(ctx, Settings{Language: "fr"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Settings(ctx); got.Provider != "" || got.Language != "fr" {
+		t.Errorf("Settings = %+v", got)
 	}
 }

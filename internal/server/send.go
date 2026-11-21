@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"cafeteria-management/internal/i18n"
 	"cafeteria-management/internal/mailer"
 	"cafeteria-management/internal/message"
 	"cafeteria-management/internal/store"
@@ -19,8 +20,7 @@ const maxTokenLen = 64
 // queue is what the server needs from the background sender.
 type queue interface {
 	Wake()
-	Provider() string
-	Interval() time.Duration
+	Interval(provider string) time.Duration
 }
 
 // sendConfirmData is the confirmation page of a sending (SPEC §4.4).
@@ -36,8 +36,11 @@ type sendConfirmData struct {
 	Recipients []recipientRow
 	Example    *message.Email
 	Token      string // one-time token of this page
+	Provider   string // sending provider this page was shown for
 	Test       bool
+	From       string // "Name <address>" of the sending account, Graph mode only
 	Minutes    int
+	Notice     string
 }
 
 // isToken reports whether s looks like a token made by crypto/rand.Text:
@@ -62,7 +65,8 @@ func sendMinutes(count int, interval time.Duration) int {
 
 // renderSendConfirm shows the confirmation page for already checked emails.
 // Nothing is written: the token only becomes "used" when a batch has it.
-func (s *Server) renderSendConfirm(w http.ResponseWriter, r *http.Request, sel selection, subject, body string, emails []message.Email) {
+func (s *Server) renderSendConfirm(w http.ResponseWriter, r *http.Request, status int, sel selection, subject, body string, emails []message.Email, notice string) {
+	provider := s.provider()
 	data := sendConfirmData{
 		ListID:     sel.listID,
 		ListName:   sel.list.Name,
@@ -75,10 +79,21 @@ func (s *Server) renderSendConfirm(w http.ResponseWriter, r *http.Request, sel s
 		Recipients: recipientRows(sel.group, sel.mode),
 		Example:    &emails[0],
 		Token:      rand.Text(),
-		Test:       s.queue.Provider() == mailer.ProviderTest,
-		Minutes:    sendMinutes(len(emails), s.queue.Interval()),
+		Provider:   provider,
+		Test:       provider == mailer.ProviderTest,
+		Minutes:    sendMinutes(len(emails), s.queue.Interval(provider)),
+		Notice:     notice,
 	}
-	s.render(w, r, http.StatusOK, "send_confirm", "children", data)
+	if provider == mailer.ProviderGraph {
+		if acc, ok := s.account(); ok {
+			// By hand: mail.Address.String would RFC 2047-encode accents.
+			data.From = acc.Address
+			if acc.Name != "" {
+				data.From = acc.Name + " <" + acc.Address + ">"
+			}
+		}
+	}
+	s.render(w, r, status, "send_confirm", "children", data)
 }
 
 // handleSend re-checks everything, then stores the batch and its emails in
@@ -100,6 +115,12 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if msg := s.sendBlocked(loc); msg != "" {
+		data.Errors = []string{msg}
+		s.renderCompose(w, r, http.StatusUnprocessableEntity, data)
+		return
+	}
+
 	emails, problems, err := message.RenderAll(subject, body, sel.group, sel.mode, loc.T("message.join_and"))
 	if err != nil {
 		s.serverError(w, r, err)
@@ -111,12 +132,20 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The page said which mode it was for: a mode changed since then must
+	// never create a batch the user did not confirm (SPEC §4.4).
+	provider := s.provider()
+	if r.PostForm.Get("provider") != provider {
+		s.renderSendConfirm(w, r, http.StatusConflict, sel, subject, body, emails, loc.T("send.error.mode_changed"))
+		return
+	}
+
 	nb := store.NewBatch{
 		Token:    token,
 		ListID:   sel.listID,
 		Version:  sel.version,
 		Families: sel.mode == message.FamilyMode,
-		Provider: s.queue.Provider(),
+		Provider: provider,
 		Subject:  subject,
 		Body:     body,
 		Messages: make([]store.NewMessage, len(emails)),
@@ -145,4 +174,15 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 	slog.Info("batch created", "batch", id, "list", sel.listID, "recipients", len(emails))
 	s.queue.Wake()
 	http.Redirect(w, r, fmt.Sprintf("/history/%d?started=1", id), http.StatusSeeOther)
+}
+
+// sendBlocked returns the localized reason why nothing can be sent now, ""
+// if sending may go on: Microsoft 365 mode needs a connected account.
+func (s *Server) sendBlocked(loc i18n.Localizer) string {
+	if s.provider() == mailer.ProviderGraph {
+		if _, ok := s.account(); !ok {
+			return loc.T("send.error.not_connected")
+		}
+	}
+	return ""
 }
