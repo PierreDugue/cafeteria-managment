@@ -6,7 +6,10 @@ import (
 )
 
 // Keys of the settings table.
-const settingLanguage = "language"
+const (
+	settingLanguage = "language"
+	settingProvider = "provider"
+)
 
 // Settings are the user's app settings (SPEC §4.6). The zero value is the
 // default for every field. Secrets never go here (SPEC §8).
@@ -14,6 +17,9 @@ type Settings struct {
 	// Language is the interface language code ("fr", "en"), or "" to
 	// follow the browser. Not validated here: see i18n.Parse.
 	Language string
+	// Provider is the sending mode: "" = test (default), "graph" =
+	// Microsoft 365 (mailer.ProviderGraph). Not validated here.
+	Provider string
 }
 
 // Settings reads the settings. Missing keys keep their zero value;
@@ -31,8 +37,11 @@ func (s *Store) Settings(ctx context.Context) (Settings, error) {
 		if err := rows.Scan(&k, &v); err != nil {
 			return Settings{}, fmt.Errorf("scan setting: %w", err)
 		}
-		if k == settingLanguage {
+		switch k {
+		case settingLanguage:
 			st.Language = v
+		case settingProvider:
+			st.Provider = v
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -51,7 +60,7 @@ func (s *Store) SaveSettings(ctx context.Context, st Settings) error {
 	defer tx.Rollback()
 
 	now := s.timestamp()
-	for _, kv := range [][2]string{{settingLanguage, st.Language}} {
+	for _, kv := range [][2]string{{settingLanguage, st.Language}, {settingProvider, st.Provider}} {
 		_, err := tx.ExecContext(ctx, `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
 			ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
 			kv[0], kv[1], now)

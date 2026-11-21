@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"cafeteria-management/internal/mailer"
 	"cafeteria-management/internal/store"
 )
 
@@ -69,7 +68,7 @@ func TestSettingsPageShowsStoredLanguage(t *testing.T) {
 	if err := st.SaveSettings(context.Background(), store.Settings{Language: "en"}); err != nil {
 		t.Fatal(err)
 	}
-	s, err := New(context.Background(), "test", st, &fakeQueue{provider: mailer.ProviderTest})
+	s, err := New(context.Background(), "test", st, &fakeQueue{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +206,7 @@ func TestSettingsUnsupportedStoredValueIsAutomatic(t *testing.T) {
 	if err := st.SaveSettings(context.Background(), store.Settings{Language: "de"}); err != nil {
 		t.Fatal(err)
 	}
-	s, err := New(context.Background(), "test", st, &fakeQueue{provider: mailer.ProviderTest})
+	s, err := New(context.Background(), "test", st, &fakeQueue{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +221,7 @@ func TestSettingsUnsupportedStoredValueIsAutomatic(t *testing.T) {
 func TestSettingsSurviveRestart(t *testing.T) {
 	s, st := newTestServer(t)
 	postSettings(s, "fr", url.Values{"language": {"en"}})
-	s2, err := New(context.Background(), "test", st, &fakeQueue{provider: mailer.ProviderTest})
+	s2, err := New(context.Background(), "test", st, &fakeQueue{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +236,7 @@ func TestNewFailsWhenSettingsCannotBeRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	st.Close()
-	if s, err := New(context.Background(), "test", st, &fakeQueue{provider: mailer.ProviderTest}); err == nil {
+	if s, err := New(context.Background(), "test", st, &fakeQueue{}, nil); err == nil {
 		t.Fatalf("New = %v, nil; want error", s)
 	}
 }
@@ -264,8 +263,8 @@ func TestSettingsSendingSectionTestBanner(t *testing.T) {
 	if body := send(s, http.MethodGet, "/settings", nil, "en").Body.String(); !strings.Contains(body, "test-banner") {
 		t.Error("test banner missing with the test provider")
 	}
-	s2, _ := newServerQ(t, &fakeQueue{provider: "microsoft"})
-	if body := send(s2, http.MethodGet, "/settings", nil, "en").Body.String(); strings.Contains(body, "test-banner") {
+	g := newGraphEnv(t)
+	if body := send(g.s, http.MethodGet, "/settings", nil, "en").Body.String(); strings.Contains(body, "test-banner") {
 		t.Error("test banner shown with a real provider")
 	}
 }

@@ -29,7 +29,7 @@ const (
 	ErrCodeSend        = "send"
 	ErrCodeRateLimited = "rate_limited"
 	ErrCodeAccount     = "account"
-	ErrCodeUnknown     = "unknown" // the app stopped while the email was being sent
+	ErrCodeUnknown     = "unknown" // maybe sent: the app stopped, or the provider did not answer
 )
 
 // maxErrorLen is the longest provider error text kept, in runes.
@@ -89,7 +89,8 @@ type Message struct {
 type QueuedMessage struct {
 	ID, BatchID                    int64
 	ToName, ToEmail, Subject, Body string
-	Attempts                       int // including this claim
+	Provider                       string // of the batch (batches.provider)
+	Attempts                       int    // including this claim
 }
 
 // CreateBatch stores a batch and its messages as pending in one
@@ -385,11 +386,11 @@ func (s *Store) ClaimNextMessage(ctx context.Context) (q QueuedMessage, ok bool,
 	if err := closeFinishedBatches(ctx, tx, 0, false, now); err != nil {
 		return q, false, err
 	}
-	err = tx.QueryRowContext(ctx, `SELECT m.id, m.batch_id, m.to_name, m.to_email, m.subject, m.body, m.attempts
+	err = tx.QueryRowContext(ctx, `SELECT m.id, m.batch_id, m.to_name, m.to_email, m.subject, m.body, b.provider, m.attempts
 		FROM messages m JOIN batches b ON b.id = m.batch_id
 		WHERE m.status = ? AND b.status = ?
 		ORDER BY m.batch_id, m.id LIMIT 1`, MsgPending, BatchSending).
-		Scan(&q.ID, &q.BatchID, &q.ToName, &q.ToEmail, &q.Subject, &q.Body, &q.Attempts)
+		Scan(&q.ID, &q.BatchID, &q.ToName, &q.ToEmail, &q.Subject, &q.Body, &q.Provider, &q.Attempts)
 	if errors.Is(err, sql.ErrNoRows) {
 		return QueuedMessage{}, false, tx.Commit()
 	}

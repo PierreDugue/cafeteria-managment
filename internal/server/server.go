@@ -16,6 +16,7 @@ import (
 
 	"cafeteria-management/internal/i18n"
 	"cafeteria-management/internal/importer"
+	"cafeteria-management/internal/mailer"
 	"cafeteria-management/internal/store"
 	"cafeteria-management/web"
 )
@@ -31,14 +32,18 @@ type Server struct {
 	pages   map[string]*template.Template
 	pending *pendingImports
 	queue   queue
+	ms      microsoftAccount // nil when Microsoft 365 is not configured
+	// langMu protects lang and mode, both settings kept in memory.
 	langMu  sync.RWMutex
 	lang    i18n.Lang // "" follows the browser; loaded at start, see handleSettingsSave
+	mode    string    // sending mode setting: "" = test, mailer.ProviderGraph
 	handler http.Handler
 }
 
 // New builds the server and loads the settings. st must stay open while the
-// server runs.
-func New(ctx context.Context, version string, st *store.Store, q queue) (*Server, error) {
+// server runs. ms is nil when Microsoft 365 is not configured: pass an
+// untyped nil, never a nil *microsoft.Client inside the interface.
+func New(ctx context.Context, version string, st *store.Store, q queue, ms microsoftAccount) (*Server, error) {
 	bundle, err := i18n.Load(web.FS)
 	if err != nil {
 		return nil, err
@@ -59,10 +64,16 @@ func New(ctx context.Context, version string, st *store.Store, q queue) (*Server
 		pages:   pages,
 		pending: newPendingImports(30 * time.Minute),
 		queue:   q,
+		ms:      ms,
 	}
 	// An unsupported stored value counts as automatic.
 	if l, ok := i18n.Parse(settings.Language); ok {
 		s.lang = l
+	}
+	// Microsoft 365 mode needs a build that has it; any other stored value
+	// counts as test.
+	if ms != nil && settings.Provider == mailer.ProviderGraph {
+		s.mode = mailer.ProviderGraph
 	}
 
 	mux := http.NewServeMux()
@@ -92,6 +103,10 @@ func New(ctx context.Context, version string, st *store.Store, q queue) (*Server
 	mux.HandleFunc("POST /history/{id}/retry", s.handleBatchRetry)
 	mux.HandleFunc("GET /settings", s.handleSettings)
 	mux.HandleFunc("POST /settings", s.handleSettingsSave)
+	mux.HandleFunc("POST /settings/microsoft/signin", s.handleMicrosoftSignIn)
+	mux.HandleFunc("GET /auth/microsoft/callback", s.handleMicrosoftCallback)
+	mux.HandleFunc("POST /settings/microsoft/signout", s.handleMicrosoftSignOut)
+	mux.HandleFunc("POST /settings/microsoft/test", s.handleMicrosoftTest)
 	mux.HandleFunc("GET /templates", s.handleTemplates)
 	mux.HandleFunc("GET /templates/new", s.handleTemplateNew)
 	mux.HandleFunc("POST /templates", s.handleTemplateCreate)

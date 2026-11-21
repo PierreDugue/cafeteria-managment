@@ -1,7 +1,8 @@
 # 008 — Microsoft 365 sending via Microsoft Graph
 
-Status: **approved (2026-11-17), on hold — not to be implemented until IT
-approves the app registration (SPEC §5.4 option 4)** · SPEC §5.1 (and
+Status: **approved (2026-11-17); implementation started 2026-11-21** (the
+user expects IT to approve the app registration, SPEC §5.4 option 4; until
+the IDs exist, builds stay in test mode, decision 2) · SPEC §5.1 (and
 §4.4, §4.6, §5.3, §7, §8, §9, §11 milestone 6)
 
 Order: after plan 007 (Tolérance, migration 008). **This plan adds no
@@ -186,7 +187,7 @@ at a time, with the existing queue, stop / resume / retry and history (plan
      |---|---|---|
      | 202 | `nil` | sent |
      | 429 | `*mailer.RateLimitError` (`Retry-After` in seconds or HTTP date) | back to pending, wait, retry (≤ 5 claims) |
-     | 503 | `*mailer.RateLimitError` (`Retry-After` or default) | same (the service did not take the request) |
+     | 503 | `ErrUncertain` (changed 2026-11-21, user decision: Exchange may already have taken the email) | failed `unknown`, never retried automatically |
      | 401 | refresh the token and retry **once**; still 401 → `ErrAccount` | batch stopped `account` |
      | 403 (`ErrorAccessDenied`, sending blocked, `Mail.Send` withdrawn) | `ErrAccount` | batch stopped `account` |
      | not signed in / refresh refused | `ErrAccount` | batch stopped `account` |
@@ -656,7 +657,7 @@ clock)
   202 → nil.
 - Error mapping, one row per line of the decision 5 table: 429 with
   `Retry-After: 7` and with an HTTP date → `RateLimitError` with the right
-  duration; 503 → `RateLimitError`; 401 then 202 → nil with one refresh;
+  duration; 503 → `ErrUncertain`; 401 then 202 → nil with one refresh;
   401 twice → `ErrAccount`; 403 → `ErrAccount`; 400 with Graph error JSON
   → plain error containing the Graph code, not `ErrAccount` /
   `ErrUncertain`; 500 / 502 / 504 → `ErrUncertain`; server closed before
@@ -768,3 +769,29 @@ check Credential Manager / Keychain Access shows the
 - Confirm the mailbox may send to **external** addresses (parents) about
   30 emails per minute, up to a few hundred per batch, and that no
   outbound policy blocks Graph `sendMail`.
+
+## Implementation notes (2026-11-21)
+
+Pre-start checks: `golang.org/x/oauth2` v0.38.0 and `go-keyring` v0.2.8 are
+still the latest versions, and both build with `CGO_ENABLED=0` for Windows
+and macOS. Microsoft's redirect URI rules are unchanged (`http://localhost`
+with the port ignored; `127.0.0.1` is refused by the portal), so decision 1
+holds. No migration.
+
+Choices made where the plan was silent:
+
+- Stored mode `graph` on a build without IDs counts as test, and saving
+  Settings writes it back as test.
+- `POST /settings` without a `sending` field keeps the current mode. The
+  field is ignored when Microsoft 365 is not configured.
+- A mode change between the confirmation page and the final POST renders the
+  confirmation page again with status 409.
+- `Send`: any 2xx is success; 429 gives `RateLimitError` (60 s default
+  without `Retry-After`); every 5xx, 503 included (user decision after
+  review), is `ErrUncertain`, because `sendMail` is not safe to repeat.
+- A refused token refresh deletes the stored sign-in only for HTTP 4xx
+  other than 408 and 429.
+- The queue treats an unknown provider as `ErrAccount` and logs a warning.
+
+To check by hand once IT provides the IDs: real sign-in and sending, and
+Windows resolving `localhost` to `::1` first.

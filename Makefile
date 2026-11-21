@@ -1,6 +1,10 @@
 APP     := cafeteria
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-LDFLAGS := -s -w -X main.version=$(VERSION)
+# Microsoft 365 app registration IDs (public identifiers, not secrets). Empty:
+# test mode only, "not available in this version".
+MS_CLIENT_ID ?=
+MS_TENANT_ID ?=
+LDFLAGS := -s -w -X main.version=$(VERSION) -X main.msClientID=$(MS_CLIENT_ID) -X main.msTenantID=$(MS_TENANT_ID)
 
 .PHONY: run test build build-all clean
 

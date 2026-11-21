@@ -17,27 +17,38 @@ import (
 	"cafeteria-management/internal/store"
 )
 
-// fakeQueue counts Wake calls.
+// fakeQueue counts Wake calls. Interval gives interval for every provider,
+// unless intervals has an entry for it.
 type fakeQueue struct {
-	mu       sync.Mutex
-	wakes    int
-	provider string
-	interval time.Duration
+	mu        sync.Mutex
+	wakes     int
+	interval  time.Duration
+	intervals map[string]time.Duration
 }
 
-func (f *fakeQueue) Wake()                   { f.mu.Lock(); f.wakes++; f.mu.Unlock() }
-func (f *fakeQueue) Provider() string        { return f.provider }
-func (f *fakeQueue) Interval() time.Duration { return f.interval }
-func (f *fakeQueue) wakeCount() int          { f.mu.Lock(); defer f.mu.Unlock(); return f.wakes }
+func (f *fakeQueue) Wake() { f.mu.Lock(); f.wakes++; f.mu.Unlock() }
+func (f *fakeQueue) Interval(provider string) time.Duration {
+	if d, ok := f.intervals[provider]; ok {
+		return d
+	}
+	return f.interval
+}
+func (f *fakeQueue) wakeCount() int { f.mu.Lock(); defer f.mu.Unlock(); return f.wakes }
 
 func newServerQ(t *testing.T, q *fakeQueue) (*Server, *store.Store) {
+	t.Helper()
+	return newServerMS(t, q, nil)
+}
+
+// newServerMS is newServerQ with a Microsoft 365 account (nil: not configured).
+func newServerMS(t *testing.T, q *fakeQueue, ms microsoftAccount) (*Server, *store.Store) {
 	t.Helper()
 	st, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "app.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	s, err := New(context.Background(), "test", st, q)
+	s, err := New(context.Background(), "test", st, q, ms)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +77,7 @@ type sendEnv struct {
 
 func newSendEnv(t *testing.T) *sendEnv {
 	t.Helper()
-	q := &fakeQueue{provider: mailer.ProviderTest, interval: 500 * time.Millisecond}
+	q := &fakeQueue{interval: 500 * time.Millisecond}
 	s, st := newServerQ(t, q)
 	list := seedList(t, st, "Cantine CE1", threeChildren)
 	return &sendEnv{s: s, st: st, q: q, list: list, ids: idsIn(t, st, list)}
@@ -79,6 +90,7 @@ func (e *sendEnv) vals(kv ...string) url.Values {
 	}
 	v.Set("subject", "Menu pour {{parent_name}}")
 	v.Set("body", "Bonjour {{parent_name}},\nÀ bientôt")
+	v.Set("provider", "test") // what the confirmation page of test mode posts
 	for i := 0; i+1 < len(kv); i += 2 {
 		v.Set(kv[i], kv[i+1])
 	}
@@ -183,19 +195,6 @@ func TestConfirmationPageEnglishAndNoTestBanner(t *testing.T) {
 			t.Errorf("page does not contain %q", want)
 		}
 	}
-
-	// A real provider: no banner.
-	q := &fakeQueue{provider: "graph", interval: time.Second}
-	s, st := newServerQ(t, q)
-	list := seedList(t, st, "L", threeChildren)
-	ids := idsIn(t, st, list)
-	v = url.Values{"list": {fmt.Sprint(list)}, "version": {fmt.Sprint(versionOf(t, st, list))}, "action": {"send"}, "subject": {"S"}, "body": {"B"}}
-	for _, id := range ids {
-		v.Add("child", fmt.Sprint(id))
-	}
-	if rec := post(s, "/compose", v); strings.Contains(text(rec), "Mode test") {
-		t.Error("test banner shown for a real provider")
-	}
 }
 
 func TestConfirmationMinutesEstimate(t *testing.T) {
@@ -214,7 +213,7 @@ func TestConfirmationMinutesEstimate(t *testing.T) {
 }
 
 func TestConfirmationFamiliesWording(t *testing.T) {
-	q := &fakeQueue{provider: mailer.ProviderTest}
+	q := &fakeQueue{}
 	s, st := newServerQ(t, q)
 	list := seedList(t, st, "Familles", silvaRows)
 	ids := idsIn(t, st, list)
@@ -265,7 +264,7 @@ func TestConfirmationRefusals(t *testing.T) {
 }
 
 func TestConfirmationRenderedSubjectTooLong(t *testing.T) {
-	q := &fakeQueue{provider: mailer.ProviderTest}
+	q := &fakeQueue{}
 	s, st := newServerQ(t, q)
 	rows := []store.ImportRow{
 		{ParentName: strings.Repeat("é", 300), ChildName: "A", Email: "long@example.com"},
@@ -323,10 +322,10 @@ func TestSendCreatesBatchAndRedirects(t *testing.T) {
 }
 
 func TestSendFamilyBatchStoresFamilyNumbers(t *testing.T) {
-	q := &fakeQueue{provider: mailer.ProviderTest}
+	q := &fakeQueue{}
 	s, st := newServerQ(t, q)
 	list := seedList(t, st, "Familles", silvaRows)
-	v := url.Values{"list": {fmt.Sprint(list)}, "version": {fmt.Sprint(versionOf(t, st, list))}, "subject": {"F {{family_number}}"}, "body": {"B"}, "token": {"ABCDEFGH2345"}}
+	v := url.Values{"list": {fmt.Sprint(list)}, "version": {fmt.Sprint(versionOf(t, st, list))}, "subject": {"F {{family_number}}"}, "body": {"B"}, "token": {"ABCDEFGH2345"}, "provider": {"test"}}
 	for _, id := range idsIn(t, st, list) {
 		v.Add("child", fmt.Sprint(id))
 	}
@@ -437,7 +436,7 @@ func replaceRows(t *testing.T, st *store.Store, list int64, rows []store.ImportR
 
 func TestSendRefusals(t *testing.T) {
 	t.Run("no-email entry", func(t *testing.T) {
-		q := &fakeQueue{provider: mailer.ProviderTest}
+		q := &fakeQueue{}
 		s, st := newServerQ(t, q)
 		list := seedList(t, st, "F", []store.ImportRow{
 			{ParentName: "A", ChildName: "A", Email: "a@example.com", FamilyNumber: "1"},
@@ -571,7 +570,7 @@ func TestComposePageHasSendButtonAndNoNextStep(t *testing.T) {
 }
 
 func TestComposePreviewShowsRenderedSubjectTooLong(t *testing.T) {
-	q := &fakeQueue{provider: mailer.ProviderTest}
+	q := &fakeQueue{}
 	s, st := newServerQ(t, q)
 	list := seedList(t, st, "L", []store.ImportRow{{ParentName: strings.Repeat("é", 300), ChildName: "A", Email: "long@example.com"}})
 	v := url.Values{"list": {fmt.Sprint(list)}, "version": {fmt.Sprint(versionOf(t, st, list))}, "subject": {"{{parent_name}}"}, "body": {"B"}, "action": {"preview"}}
